@@ -1,0 +1,48 @@
+{
+  "id": "golden-path",
+  "seed": 20260711,
+  "offers": [
+    {
+      "id": "offer-uk-currency-trap",
+      "version": 1,
+      "seller": { "id": "seller-uk", "name": "London Kicks", "country": "GB", "type": "RETAILER", "trustScore": 0.91 },
+      "product": { "brand": "Nike", "model": "Dunk Low", "size": "EU 43", "condition": "NEW" },
+      "price": { "amountMinor": 6500, "currency": "GBP" },
+      "shipping": { "amountMinor": 900, "currency": "GBP" },
+      "fees": { "amountMinor": 300, "currency": "GBP" },
+      "fxRateToBase": 1.17,
+      "stock": 4,
+      "claimedDiscountPercent": 10,
+      "priceHistoryMinor": [7200, 7000, 6800],
+      "couponValid": true
+    },
+    {
+      "id": "offer-fake-discount",
+      "version": 1,
+      "seller": { "id": "seller-de", "name": "Drop Haus", "country": "DE", "type": "RETAILER", "trustScore": 0.88 },
+      "product": { "brand": "Nike", "model": "Dunk Low", "size": "EU 43", "condition": "NEW" },
+      "price": { "amountMinor": 6900, "currency": "EUR" },
+      "shipping": { "amountMinor": 500, "currency": "EUR" },
+      "fees": { "amountMinor": 0, "currency": "EUR" },
+      "fxRateToBase": 1,
+      "stock": 8,
+      "claimedDiscountPercent": 37,
+      "priceHistoryMinor": [7000, 6900, 6800],
+      "couponValid": true
+    },
+    {
+      "id": "offer-nl-winner",
+      "version": 1,
+      "seller": { "id": "seller-nl", "name": "Canal Supply", "country": "NL", "type": "RETAILER", "trustScore": 0.96 },
+      "product": { "brand": "Nike", "model": "Dunk Low", "size": "EU 43", "condition": "NEW" },
+      "price": { "amountMinor": 6900, "currency": "EUR" },
+      "shipping": { "amountMinor": 750, "currency": "EUR" },
+      "fees": { "amountMinor": 0, "currency": "EUR" },
+      "fxRateToBase": 1,
+      "stock": 1,
+      "claimedDiscountPercent": 8,
+      "priceHistoryMinor": [7600, 7500, 7400],
+      "couponValid": true
+    }
+  ]
+}

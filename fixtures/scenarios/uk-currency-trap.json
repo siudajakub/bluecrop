@@ -1,0 +1,20 @@
+{
+  "id": "uk-currency-trap",
+  "seed": 20260711,
+  "offers": [
+    {
+      "id": "offer-uk-currency-trap",
+      "version": 1,
+      "seller": { "id": "seller-uk", "name": "London Kicks", "country": "GB", "type": "RETAILER", "trustScore": 0.91 },
+      "product": { "brand": "Nike", "model": "Dunk Low", "size": "EU 43", "condition": "NEW" },
+      "price": { "amountMinor": 6500, "currency": "GBP" },
+      "shipping": { "amountMinor": 900, "currency": "GBP" },
+      "fees": { "amountMinor": 300, "currency": "GBP" },
+      "fxRateToBase": 1.17,
+      "stock": 4,
+      "claimedDiscountPercent": 10,
+      "priceHistoryMinor": [7200, 7000, 6800],
+      "couponValid": true
+    }
+  ]
+}

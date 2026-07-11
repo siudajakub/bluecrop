@@ -1,0 +1,38 @@
+{
+  "name": "deal-hunter",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "tsx watch apps/api/src/server.ts",
+    "start": "node dist/api/server.js",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run typecheck && python3 tools/check_agent_docs.py",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "build": "esbuild apps/api/src/server.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/api/server.js",
+    "demo:reset": "node --disable-warning=DEP0205 --import tsx scripts/demo/reset.ts",
+    "demo:smoke": "node --disable-warning=DEP0205 --import tsx scripts/demo/smoke.ts"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@fastify/cors": "latest",
+    "dotenv": "latest",
+    "fastify": "latest",
+    "openai": "latest",
+    "zod": "latest"
+  },
+  "devDependencies": {
+    "@types/node": "24.0.10",
+    "esbuild": "0.25.5",
+    "tsx": "4.20.3",
+    "typescript": "5.9.3",
+    "vitest": "3.2.4"
+  }
+}

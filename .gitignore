@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.env
+.env.local
+coverage/
+*.log
+.DS_Store
+
+# Source challenge materials are intentionally not published.
+*-case.pdf
+ANALIZA_SCIEZEK.md

@@ -1,0 +1,20 @@
+{
+  "id": "fake-discount",
+  "seed": 20260711,
+  "offers": [
+    {
+      "id": "offer-fake-discount",
+      "version": 1,
+      "seller": { "id": "seller-de", "name": "Drop Haus", "country": "DE", "type": "RETAILER", "trustScore": 0.88 },
+      "product": { "brand": "Nike", "model": "Dunk Low", "size": "EU 43", "condition": "NEW" },
+      "price": { "amountMinor": 6900, "currency": "EUR" },
+      "shipping": { "amountMinor": 500, "currency": "EUR" },
+      "fees": { "amountMinor": 0, "currency": "EUR" },
+      "fxRateToBase": 1,
+      "stock": 8,
+      "claimedDiscountPercent": 37,
+      "priceHistoryMinor": [7000, 6900, 6800],
+      "couponValid": true
+    }
+  ]
+}
