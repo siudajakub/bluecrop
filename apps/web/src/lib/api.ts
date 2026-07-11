@@ -9,6 +9,7 @@ import type {
   Mandate,
   Receipt,
   RunEvent,
+  ScrapeOffersResponse,
 } from "@deal-hunter/contracts";
 
 export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:3001";
@@ -144,4 +145,11 @@ export function getEvalSummary() {
 
 export function resetDemo() {
   return request<{ status: "RESET"; seed: number }>("/api/demo/reset", { method: "POST" });
+}
+
+export function scrapeOffers(urls: string[]) {
+  return request<ScrapeOffersResponse>("/api/offers/scrape", {
+    method: "POST",
+    body: JSON.stringify({ urls }),
+  });
 }

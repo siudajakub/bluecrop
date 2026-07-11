@@ -92,6 +92,37 @@ Rozmowa głosowa używa WebRTC i krótkotrwałego sekretu sesji wydawanego przez
 `OPENAI_API_KEY` nigdy nie jest zwracany do przeglądarki. Mikrofon wymaga zgody użytkownika i jest
 zatrzymywany po zakończeniu rozmowy, resecie połączenia albo opuszczeniu widoku.
 
+### Pobieranie ofert ze sklepów
+
+Backend może opcjonalnie pobrać publiczne strony sklepów i użyć OpenAI Structured Outputs do
+wyodrębnienia ofert. Klucz pozostaje wyłącznie po stronie API. Scraper jest domyślnie wyłączony i
+akceptuje tylko jawnie dozwolone hosty HTTPS:
+
+```bash
+OFFER_SCRAPER_MODE=openai
+OPENAI_API_KEY=...
+OPENAI_MODEL=gpt-5.6
+SCRAPER_ALLOWED_HOSTS=www.morele.net,allegro.pl,www.olx.pl
+SCRAPER_MAX_HTML_BYTES=1000000
+```
+
+Przykładowe wywołanie:
+
+```bash
+curl -X POST http://127.0.0.1:3001/api/offers/scrape \
+  -H "content-type: application/json" \
+  -d '{"urls":["https://www.morele.net/wyszukiwarka/?q=laptop"]}'
+```
+
+Odpowiedź zawiera `offers` zgodne ze wspólnym schematem Zod oraz błędy poszczególnych stron w
+`errors`. OpenAI jedynie ekstrahuje pola widoczne na stronie. Pobieranie HTML, allowlista hostów,
+ochrona przed SSRF, limit rozmiaru i walidacja odpowiedzi pozostają deterministyczne w backendzie.
+Pola niewidoczne na stronie mają wartość `null`; model nie wylicza `riskScore` i nie autoryzuje zakupu.
+
+Wdrożenie powinno respektować regulaminy sklepów, `robots.txt`, limity zapytań i obowiązujące prawo.
+Strony wymagające JavaScriptu, logowania lub CAPTCHA mogą zwrócić błąd i wymagają osobnego,
+autoryzowanego adaptera przeglądarkowego lub oficjalnego feedu/API sprzedawcy.
+
 ## Komendy
 
 ```bash

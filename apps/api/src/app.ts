@@ -6,6 +6,8 @@ import {
   InterviewRequestSchema,
   ProductSearchRequestSchema,
   MandateSchema,
+  ScrapeOffersRequestSchema,
+  ScrapeOffersResponseSchema,
   type CompileMandateResponse,
   type Decision,
   type Mandate,
@@ -25,6 +27,7 @@ import {
   type ProductInterviewer,
 } from "./services/product-interviewer.js";
 import { FixtureProductSearcher, type ProductSearcher } from "./services/product-searcher.js";
+import type { OfferScraper } from "./services/offer-scraper.js";
 import { InMemoryStore } from "./store.js";
 
 const IdempotencySchema = z.object({ idempotencyKey: z.string().min(4) });
@@ -52,6 +55,7 @@ export type BuildAppOptions = {
   searcher?: ProductSearcher;
   store?: InMemoryStore;
   logger?: boolean;
+  offerScraper?: OfferScraper;
 };
 
 export async function buildApp(options: BuildAppOptions): Promise<FastifyInstance> {
@@ -91,6 +95,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     status: "ok",
     compiler: options.compiler.kind,
     model: options.config.openAIModel,
+    offerScraper: options.offerScraper ? "openai" : "disabled",
     now: new Date().toISOString(),
   }));
 
@@ -135,6 +140,23 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
       throw new ApiError(503, "VOICE_SESSION_FAILED", data.error?.message ?? "Nie udało się rozpocząć rozmowy głosowej.");
     }
     return { value: data.value, expiresAt: data.expires_at, model: options.config.openAIRealtimeModel };
+  });
+
+  app.post("/api/offers/scrape", async (request) => {
+    if (!options.offerScraper) {
+      throw new ApiError(503, "OFFER_SCRAPER_DISABLED", "Scraper ofert nie jest skonfigurowany.");
+    }
+    const input = ScrapeOffersRequestSchema.parse(request.body);
+    const offers = [];
+    const errors: Array<{ url: string; code: string; message: string }> = [];
+    for (const url of input.urls) {
+      try {
+        offers.push(...await options.offerScraper.scrape(url));
+      } catch (error) {
+        errors.push({ url, code: "SCRAPE_FAILED", message: error instanceof Error ? error.message : "Nieznany błąd scrapera." });
+      }
+    }
+    return ScrapeOffersResponseSchema.parse({ offers, errors });
   });
 
   app.post("/api/mandates/compile", async (request, reply) => {

@@ -164,6 +164,37 @@ export const CanonicalOfferSchema = z.object({
 });
 export type CanonicalOffer = z.infer<typeof CanonicalOfferSchema>;
 
+export const ScrapeOffersRequestSchema = z.object({
+  urls: z.array(z.string().url()).min(1).max(5),
+});
+export type ScrapeOffersRequest = z.infer<typeof ScrapeOffersRequestSchema>;
+
+export const ScrapedOfferSchema = z.object({
+  id: z.string().min(1),
+  productId: z.string().min(1),
+  merchantId: z.string().min(1),
+  category: z.string().min(1).nullable(),
+  productName: z.string().min(1),
+  store: z.string().min(1),
+  shippingFrom: z.string().min(1).nullable(),
+  price: MoneySchema,
+  deliveryPrice: MoneySchema.nullable(),
+  stock: z.number().int().nonnegative().nullable(),
+  deliveryDays: z.number().int().nonnegative().nullable(),
+  couponCode: z.string().min(1).nullable(),
+  riskScore: z.null(),
+  url: z.string().url(),
+  imageUrl: z.string().url().nullable(),
+  scrapedAt: z.string().datetime(),
+});
+export type ScrapedOffer = z.infer<typeof ScrapedOfferSchema>;
+
+export const ScrapeOffersResponseSchema = z.object({
+  offers: z.array(ScrapedOfferSchema),
+  errors: z.array(z.object({ url: z.string().url(), code: z.string(), message: z.string() })),
+});
+export type ScrapeOffersResponse = z.infer<typeof ScrapeOffersResponseSchema>;
+
 export const DecisionActionSchema = z.enum(["IGNORE", "ALERT", "ASK_USER", "AUTO_BUY"]);
 export type DecisionAction = z.infer<typeof DecisionActionSchema>;
 
