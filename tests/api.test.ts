@@ -41,7 +41,7 @@ describe("Deal Hunter API", () => {
     expect(first.json()).toMatchObject({ status: "QUESTION", interviewer: "fixture", brief: null });
     expect(first.json().assistantMessage).toContain("budżet");
     expect(first.json().options.length).toBeGreaterThanOrEqual(2);
-    expect(first.json()).toMatchObject({ questionNumber: 1, maxQuestions: 2 });
+    expect(first.json()).toMatchObject({ questionNumber: 1, maxQuestions: 4 });
 
     const ready = await app.inject({
       method: "POST",
@@ -75,13 +75,13 @@ describe("Deal Hunter API", () => {
 
   it("forces a plan after the hard interview question limit", async () => {
     const messages = [{ role: "user", content: "Szukam produktu do nowego hobby" }];
-    for (let index = 0; index < 2; index += 1) {
+    for (let index = 0; index < 4; index += 1) {
       messages.push({ role: "assistant", content: `Pytanie ${index + 1}` });
       messages.push({ role: "user", content: `Odpowiedź ${index + 1}` });
     }
     const response = await app.inject({ method: "POST", url: "/api/interviews/respond", payload: { messages } });
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toMatchObject({ status: "READY", options: [], maxQuestions: 2 });
+    expect(response.json()).toMatchObject({ status: "READY", options: [], maxQuestions: 4 });
     expect(response.json().plan).not.toBeNull();
   });
 

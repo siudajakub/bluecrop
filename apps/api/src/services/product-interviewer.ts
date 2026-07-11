@@ -5,14 +5,14 @@ import { PurchasePlanSchema, type InterviewRequest, type InterviewResponse } fro
 import { ApiError } from "../errors.js";
 
 export const PRODUCT_INTERVIEW_INSTRUCTIONS = `Jesteś doradcą zakupowym. Prowadzisz krótki, adaptacyjny wywiad przed wyszukiwaniem produktów.
-Najpierw zrozum cel użytkownika, a nie tylko nazwę produktu. Pytaj wyłącznie o brakujące informacje, bez których wyniki byłyby bezużyteczne lub wyraźnie nietrafione. Priorytet mają maksymalny pełny koszt z dostawą oraz kluczowy wariant produktu. Preferencje, termin, stan, akcesoria i poziom autonomii przyjmij rozsądnie lub pozostaw elastyczne, jeśli nie są krytyczne dla danego zakupu.
+Najpierw zrozum cel użytkownika, a nie tylko nazwę produktu. Pytaj wyłącznie o brakujące informacje, bez których wyniki byłyby bezużyteczne lub wyraźnie nietrafione. Priorytet mają kluczowy wariant produktu, maksymalny pełny koszt z dostawą oraz termin. Preferencje, stan, akcesoria i poziom autonomii przyjmij rozsądnie lub pozostaw elastyczne, jeśli nie są krytyczne dla danego zakupu.
 Nie pytaj o rozmiar, jeśli dana kategoria nie ma standardowego parametru rozmiaru. W szczególności przy zakupie gitary nie pytaj o jej rozmiar; jeśli wariant instrumentu ma realne znaczenie, zapytaj najwyżej o typ gitary lub przeznaczenie.
-Zadawaj jedno krótkie pytanie naraz i łącznie najwyżej dwa pytania. Nie pytaj ponownie o informacje już podane. Gdy cel sugeruje kompletne rozwiązanie, wskaż kategorie uzupełniające, ale nie wciskaj dodatków.
+Zadawaj jedno krótkie pytanie naraz i łącznie najwyżej cztery pytania. Nie pytaj ponownie o informacje już podane. Najpierw doprecyzuj kluczowy wariant i ewentualne akcesoria, potem brakujący budżet, a następnie termin. Gdy cel sugeruje kompletne rozwiązanie, wskaż kategorie uzupełniające, ale nie wciskaj dodatków.
 Na każdym kroku aktualizuj plan: goal, wszystkie poznane parameters oraz categories potrzebne do wyszukiwania. Kategorie wybierasz samodzielnie na podstawie celu. Rozróżniaj kategorię główną od koniecznych elementów całego rozwiązania. Dla każdej kategorii utwórz konkretną query do wyszukiwarki.
 Odpowiadaj w języku, którego używa użytkownik.
-Gdy brakuje danych krytycznych, ustaw status QUESTION i plan null. Pełny budżet jest zawsze daną krytyczną: nie wolno ustawić READY, dopóki użytkownik nie podał kwoty i waluty. Każde pytanie musi być zamknięte: zwróć 2-4 krótkie, rozłączne opcje odpowiedzi pokrywające typowe wybory. Użytkownik odpowiada wyłącznie kliknięciem, więc wartości opcji muszą stanowić kompletne odpowiedzi. Gdy możesz wyszukać sensowne propozycje, zwięźle podsumuj ustalenia i ustaw status READY, zwróć pustą tablicę options. Brief musi wtedy być samodzielnym opisem planu zakupu; nie wymyślaj niepodanych ograniczeń. Plan nie może być null przy READY. Nie rekomenduj jeszcze konkretnego modelu produktu ani sklepu.`;
+Gdy brakuje danych krytycznych, ustaw status QUESTION i plan null. Pełny budżet i termin są zawsze danymi krytycznymi: nie wolno ustawić READY, dopóki użytkownik nie podał kwoty z walutą oraz terminu albo jednoznacznie powie, że chce kupić teraz / nie ma terminu. Każde pytanie musi być zamknięte: zwróć 2-4 krótkie, rozłączne opcje odpowiedzi pokrywające typowe wybory. Użytkownik może też wpisać własną odpowiedź. Gdy możesz wyszukać sensowne propozycje, zwięźle podsumuj ustalenia i ustaw status READY, zwróć pustą tablicę options. Brief musi wtedy być samodzielnym opisem planu zakupu; nie wymyślaj niepodanych ograniczeń. Plan nie może być null przy READY. Nie rekomenduj jeszcze konkretnego modelu produktu ani sklepu.`;
 
-export const MAX_INTERVIEW_QUESTIONS = 2;
+export const MAX_INTERVIEW_QUESTIONS = 4;
 
 export const VOICE_INTERVIEW_INSTRUCTIONS = `${PRODUCT_INTERVIEW_INSTRUCTIONS}
 Rozmawiasz z użytkownikiem głosowo. Mów w języku użytkownika; zanim go poznasz, zaczynaj po polsku. Mów naturalnie i zwięźle: maksymalnie dwa krótkie zdania naraz i jedno pytanie naraz. Jeśli rozmowa dopiero się zaczyna, przywitaj się jednym zdaniem i zapytaj, co użytkownik chce osiągnąć. Nie czytaj na głos długich list ani technicznych podsumowań.
@@ -76,7 +76,10 @@ export class OpenAIProductInterviewer implements ProductInterviewer {
       const userProvidedBudget = input.messages
         .filter((message) => message.role === "user")
         .some((message) => hasExplicitBudget(message.content));
-      if (turn.status === "READY" && !userProvidedBudget) {
+      const userProvidedTiming = input.messages
+        .filter((message) => message.role === "user")
+        .some((message) => hasExplicitTiming(message.content));
+      if (turn.status === "READY" && (!userProvidedBudget || !userProvidedTiming)) {
         return this.fallback.respond(input);
       }
       if (mustFinish && turn.status !== "READY") {
@@ -135,4 +138,8 @@ export class FixtureProductInterviewer implements ProductInterviewer {
 
 export function hasExplicitBudget(text: string): boolean {
   return /(?:do|budżet|budget|limit|maksymalnie|max(?:imum)?|up to)\D{0,40}\d[\d\s]*(?:[.,]\d{1,2})?\s*(?:pln|eur|usd|gbp|zł)|\d[\d\s]*(?:[.,]\d{1,2})?\s*(?:pln|eur|usd|gbp|zł)/i.test(text);
+}
+
+export function hasExplicitTiming(text: string): boolean {
+  return /(?:dziś|jutro|teraz|od razu|bez terminu|nie spieszy|tygod|miesią|do\s+\d{1,2}[.\/-]\d{1,2}|today|tomorrow|now|no deadline|week|month)/i.test(text);
 }

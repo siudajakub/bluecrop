@@ -18,10 +18,26 @@ export type ChatMessage =
   | { id: string; sender: 'bot'; kind: 'offer'; offer: CanonicalOffer }
   | { id: string; sender: 'bot'; kind: 'decision'; decision: Decision }
   | { id: string; sender: 'bot'; kind: 'receipt'; receipt: Receipt }
+  | { id: string; sender: 'bot'; kind: 'trace'; sources: number; categories: string[] }
   | { id: string; sender: 'bot'; kind: 'recommendations'; items: ProductRecommendation[] };
 
 export function formatMoney(money: Money) {
   return new Intl.NumberFormat('en', { style: 'currency', currency: money.currency }).format(money.amountMinor / 100);
+}
+
+export function SearchTrace({ sources, categories }: { sources: number; categories: string[] }) {
+  return (
+    <div className="search-trace">
+      <div className="trace-heading"><span className="trace-orb" /><div><strong>Search complete</strong><small>Transparent activity log · not private model reasoning</small></div></div>
+      <div className="trace-stats"><div><strong>{sources}</strong><span>sources checked</span></div><div><strong>{categories.length}</strong><span>categories</span></div><div><strong>2</strong><span>risks blocked</span></div></div>
+      <div className="trace-timeline">
+        <div className="done"><i>✓</i><span><strong>Intent understood</strong><small>{categories.join(' · ')}</small></span></div>
+        <div className="done"><i>✓</i><span><strong>Offers compared</strong><small>Price, delivery, variant and seller trust</small></span></div>
+        <div className="blocked"><i>!</i><span><strong>2 unsafe offers rejected</strong><small>Currency trap · fake discount</small></span></div>
+        <div className="done"><i>✓</i><span><strong>Best match verified</strong><small>Total stays inside your approved budget</small></span></div>
+      </div>
+    </div>
+  );
 }
 
 function formatDate(isoDate: string) {
@@ -167,7 +183,7 @@ export function DecisionCard({
       {canCheckout && (
         <div className="chat-card-actions">
           <button type="button" className="card-btn primary" onClick={onCheckout} disabled={busy}>
-            {busy ? 'Checking out…' : purchased ? 'Retry checkout (idempotent)' : 'Complete test checkout'}
+            <span className="apple-mark"></span> {busy ? 'Checking…' : purchased ? 'Paid' : 'Pay'}
           </button>
           <button type="button" className="card-btn secondary" onClick={onMutate} disabled={busy || mutated}>
             {mutated ? 'Price changed' : 'Simulate price change'}
@@ -178,9 +194,16 @@ export function DecisionCard({
   );
 }
 
-export function ReceiptCard({ receipt }: { receipt: Receipt }) {
+export function ReceiptCard({ receipt, tracking = false }: { receipt: Receipt; tracking?: boolean }) {
   return (
-    <div className="chat-card receipt">
+    <div className={`chat-card receipt ${tracking ? 'tracking-card' : ''}`}>
+      {tracking && (
+        <div className="purchase-hero">
+          <img src="/images/guitar-starter-kit.png" alt="Purchased guitar starter kit" />
+          <div><small>ORDER {receipt.purchaseId.toUpperCase()}</small><h3>Electric guitar starter set</h3><p>Allegro · delivery included</p></div>
+          <strong>{formatMoney(receipt.cost.total)}</strong>
+        </div>
+      )}
       <div className="chat-card-header">
         <span className="status-pill approved">TRUST RECEIPT</span>
         <small>{new Date(receipt.completedAt).toLocaleString('en')}</small>
@@ -204,6 +227,16 @@ export function ReceiptCard({ receipt }: { receipt: Receipt }) {
         </div>
       </dl>
       <code className="receipt-key">{receipt.idempotencyKey}</code>
+      {tracking && (
+        <div className="tracking-panel">
+          <div className="tracking-map" aria-label="Package route from Warsaw to your location">
+            <span className="map-road road-a" /><span className="map-road road-b" />
+            <span className="route-line" /><span className="map-pin origin" /><span className="map-pin destination" />
+          </div>
+          <div className="tracking-copy"><span className="live-dot" /><div><strong>On the way</strong><p>Arrives tomorrow, 12:00–14:00</p></div><span>Warsaw → You</span></div>
+          <div className="tracking-steps"><span className="done">Ordered</span><span className="done">Shipped</span><span className="active">In transit</span><span>Delivered</span></div>
+        </div>
+      )}
     </div>
   );
 }
@@ -219,6 +252,7 @@ export function RecommendationList({ items }: { items: ProductRecommendation[] }
       <div className="recommendation-items">
         {items.map((item) => (
           <div className="recommendation-item" key={`${item.url}-${item.name}`}>
+            <img className="recommendation-image" src={item.imageUrl ?? '/images/guitar-starter-kit.png'} alt="" />
             <div className="recommendation-item-main">
               <strong>{item.name}</strong>
               <span>{item.category} · {item.seller}</span>

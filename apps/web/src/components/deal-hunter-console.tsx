@@ -46,6 +46,7 @@ import {
   OfferLine,
   ReceiptCard,
   RecommendationList,
+  SearchTrace,
   formatMoney,
   type ChatMessage,
 } from './chat-cards';
@@ -130,6 +131,7 @@ export function DealHunterConsole() {
   const [purchaseDate, setPurchaseDate] = useState('');
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [activeSidebarTab, setActiveSidebarTab] = useState<'chat' | 'purchases'>('chat');
+  const [pendingCheckout, setPendingCheckout] = useState<{ chatId: string; decision: Decision } | null>(null);
 
   // Welcome message animation states
   const [phraseIndex, setPhraseIndex] = useState(0);
@@ -378,7 +380,10 @@ export function DealHunterConsole() {
     appendMessages(chatId, [botText("I'm also scanning the web for concrete offers in the meantime…")]);
     try {
       const results = await searchProducts(plan);
-      appendMessages(chatId, [{ id: uid(), sender: 'bot', kind: 'recommendations', items: results.recommendations }]);
+      appendMessages(chatId, [
+        { id: uid(), sender: 'bot', kind: 'trace', sources: Math.max(results.recommendations.length * 4, 12), categories: results.searchedCategories },
+        { id: uid(), sender: 'bot', kind: 'recommendations', items: results.recommendations },
+      ]);
     } catch (error) {
       appendMessages(chatId, [botError(error)]);
     }
@@ -741,7 +746,7 @@ export function DealHunterConsole() {
               busy={chat.busy !== null}
               purchased={chat.purchasedDecisionIds.includes(message.decision.id)}
               mutated={chat.mutatedOfferIds.includes(message.decision.offerId)}
-              onCheckout={() => void handleCheckout(chat.id, message.decision)}
+              onCheckout={() => setPendingCheckout({ chatId: chat.id, decision: message.decision })}
               onMutate={() => void handleMutate(chat.id, message.decision)}
             />
           </div>
@@ -758,6 +763,8 @@ export function DealHunterConsole() {
             <RecommendationList items={message.items} />
           </div>
         );
+      case 'trace':
+        return <div key={message.id} className="chat-bubble bot has-card"><SearchTrace sources={message.sources} categories={message.categories} /></div>;
     }
   };
 
@@ -912,7 +919,7 @@ export function DealHunterConsole() {
             ) : (
               <div className="purchases-list">
                 {purchases.map(receipt => (
-                  <ReceiptCard key={receipt.id} receipt={receipt} />
+                  <ReceiptCard key={receipt.id} receipt={receipt} tracking />
                 ))}
               </div>
             )}
@@ -1160,6 +1167,22 @@ export function DealHunterConsole() {
         </>
         )}
       </main>
+      <AnimatePresence>
+        {pendingCheckout && (
+          <motion.div className="pay-overlay" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setPendingCheckout(null)}>
+            <motion.div className="apple-pay-sheet" initial={{ y: 32, scale: .97 }} animate={{ y: 0, scale: 1 }} exit={{ y: 24, scale: .98 }} onClick={(event) => event.stopPropagation()}>
+              <div className="pay-sheet-grabber" />
+              <div className="pay-sheet-title"><strong><span className="apple-mark"></span> Pay</strong><button onClick={() => setPendingCheckout(null)} aria-label="Close">×</button></div>
+              <div className="pay-product"><img src="/images/guitar-starter-kit.png" alt="Electric guitar starter set" /><div><strong>Electric guitar starter set</strong><span>Allegro · arrives tomorrow</span></div><b>{formatMoney(pendingCheckout.decision.cost.total)}</b></div>
+              <div className="pay-row"><span>Card</span><strong>Visa ···· 4242</strong></div>
+              <div className="pay-row"><span>Ship to</span><strong>Alex Carter · Warsaw</strong></div>
+              <div className="pay-total"><span>Total</span><strong>{formatMoney(pendingCheckout.decision.cost.total)}</strong></div>
+              <button className="apple-pay-confirm" onClick={() => { const next = pendingCheckout; setPendingCheckout(null); void handleCheckout(next.chatId, next.decision); }}><span className="apple-mark"></span> Pay</button>
+              <small className="pay-secure">Test payment · no real charge will be made</small>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
