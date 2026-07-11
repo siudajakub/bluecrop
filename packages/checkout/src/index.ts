@@ -23,7 +23,8 @@ export function revalidateCheckout(run: Run, mandate: Mandate, decision: Decisio
     reasons.push("TOTAL_CAP_EXCEEDED");
   }
   if (offer.stock < 1) reasons.push("OUT_OF_STOCK");
-  if (decision.action !== "AUTO_BUY") reasons.push("ACTION_NOT_AUTHORIZED");
+  // The checkout request itself is the user's explicit approval for ASK_USER.
+  if (decision.action !== "AUTO_BUY" && decision.action !== "ASK_USER") reasons.push("ACTION_NOT_AUTHORIZED");
   if (reasons.length) throw new RevalidationError(reasons);
 }
 

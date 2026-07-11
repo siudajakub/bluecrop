@@ -3,6 +3,8 @@ import Fastify, { type FastifyInstance } from "fastify";
 import { z } from "zod";
 import {
   CompileMandateRequestSchema,
+  InterviewRequestSchema,
+  ProductSearchRequestSchema,
   MandateSchema,
   type CompileMandateResponse,
   type Decision,
@@ -16,6 +18,13 @@ import type { AppConfig } from "./config.js";
 import { ApiError } from "./errors.js";
 import { loadScenario } from "./scenarios.js";
 import type { MandateCompiler } from "./services/mandate-compiler.js";
+import {
+  FixtureProductInterviewer,
+  VOICE_FINALIZE_TOOL,
+  VOICE_INTERVIEW_INSTRUCTIONS,
+  type ProductInterviewer,
+} from "./services/product-interviewer.js";
+import { FixtureProductSearcher, type ProductSearcher } from "./services/product-searcher.js";
 import { InMemoryStore } from "./store.js";
 
 const IdempotencySchema = z.object({ idempotencyKey: z.string().min(4) });
@@ -39,6 +48,8 @@ const MutationBodySchema = z.object({
 export type BuildAppOptions = {
   config: AppConfig;
   compiler: MandateCompiler;
+  interviewer?: ProductInterviewer;
+  searcher?: ProductSearcher;
   store?: InMemoryStore;
   logger?: boolean;
 };
@@ -46,6 +57,8 @@ export type BuildAppOptions = {
 export async function buildApp(options: BuildAppOptions): Promise<FastifyInstance> {
   const app = Fastify({ logger: options.logger ?? false });
   const store = options.store ?? new InMemoryStore();
+  const interviewer = options.interviewer ?? new FixtureProductInterviewer();
+  const searcher = options.searcher ?? new FixtureProductSearcher();
   await app.register(cors, {
     origin: [...new Set([options.config.webOrigin, "http://localhost:3000", "http://127.0.0.1:3000"])],
   });
@@ -77,8 +90,52 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   app.get("/health", async () => ({
     status: "ok",
     compiler: options.compiler.kind,
+    model: options.config.openAIModel,
     now: new Date().toISOString(),
   }));
+
+  app.post("/api/interviews/respond", async (request) => {
+    const input = InterviewRequestSchema.parse(request.body);
+    const result = await interviewer.respond(input);
+    return { ...result, interviewer: interviewer.kind };
+  });
+
+  app.post("/api/products/search", async (request) => {
+    const input = ProductSearchRequestSchema.parse(request.body);
+    const result = await searcher.search(input);
+    return { ...result, searcher: searcher.kind };
+  });
+
+  app.post("/api/realtime/token", async () => {
+    if (!options.config.openAIApiKey) {
+      throw new ApiError(503, "VOICE_NOT_CONFIGURED", "Rozmowa głosowa wymaga OPENAI_API_KEY na backendzie.");
+    }
+    const response = await fetch("https://api.openai.com/v1/realtime/client_secrets", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${options.config.openAIApiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        session: {
+          type: "realtime",
+          model: options.config.openAIRealtimeModel,
+          instructions: VOICE_INTERVIEW_INSTRUCTIONS,
+          tools: [VOICE_FINALIZE_TOOL],
+          tool_choice: "auto",
+          audio: {
+            input: { transcription: { model: "gpt-4o-mini-transcribe", language: "pl" } },
+            output: { voice: "marin" },
+          },
+        },
+      }),
+    });
+    const data = await response.json() as { value?: string; expires_at?: number; error?: { message?: string } };
+    if (!response.ok || !data.value) {
+      throw new ApiError(503, "VOICE_SESSION_FAILED", data.error?.message ?? "Nie udało się rozpocząć rozmowy głosowej.");
+    }
+    return { value: data.value, expiresAt: data.expires_at, model: options.config.openAIRealtimeModel };
+  });
 
   app.post("/api/mandates/compile", async (request, reply) => {
     const input = CompileMandateRequestSchema.parse(request.body);
@@ -101,7 +158,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
           compiler: options.compiler.kind,
           error: {
             code: "AMBIGUOUS_MANDATE",
-            message: "Uzupełnij brakujące warunki mandatu.",
+            message: "Uzupełnij brakujące warunki planu zakupu.",
             fieldErrors: draft.ambiguities.map(({ field, code }) => ({ field, code })),
           },
         }
@@ -116,10 +173,10 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     if (cached) return cached;
     const mandate = getMandate(store, request.params.mandateId);
     if (mandate.version !== input.expectedVersion) {
-      throw new ApiError(409, "VERSION_CONFLICT", "Mandat ma nowszą wersję.");
+      throw new ApiError(409, "VERSION_CONFLICT", "Plan zakupu ma nowszą wersję.");
     }
-    if (!mandate.product.size || !mandate.product.condition || !mandate.maxTotal) {
-      throw new ApiError(422, "AMBIGUOUS_MANDATE", "Mandat nadal zawiera braki.");
+    if (!mandate.product.condition || !mandate.maxTotal) {
+      throw new ApiError(422, "AMBIGUOUS_MANDATE", "Plan zakupu nadal zawiera braki.");
     }
     const approved = MandateSchema.parse({ ...mandate, status: "APPROVED" });
     store.mandates.set(approved.id, approved);
@@ -135,7 +192,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     if (cached) return cached;
     const mandate = getMandate(store, request.params.mandateId);
     if (mandate.version !== input.expectedVersion) {
-      throw new ApiError(409, "VERSION_CONFLICT", "Mandat ma nowszą wersję.");
+      throw new ApiError(409, "VERSION_CONFLICT", "Plan zakupu ma nowszą wersję.");
     }
     const revoked = MandateSchema.parse({ ...mandate, version: mandate.version + 1, status: "REVOKED" });
     store.mandates.set(revoked.id, revoked);
@@ -150,7 +207,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     const cached = store.idempotency.get(cacheKey);
     if (cached) return reply.status(200).send(cached);
     const mandate = getMandate(store, input.mandateId);
-    if (mandate.status !== "APPROVED") throw new ApiError(409, "MANDATE_NOT_APPROVED", "Najpierw zatwierdź mandat.");
+    if (mandate.status !== "APPROVED") throw new ApiError(409, "MANDATE_NOT_APPROVED", "Najpierw zatwierdź plan zakupu.");
 
     let scenario;
     try {
@@ -161,7 +218,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     if (scenario.seed !== input.seed) throw new ApiError(422, "SEED_MISMATCH", "Scenariusz wymaga ustalonego seeda.");
 
     const runId = store.nextId("run");
-    const offers = structuredClone(scenario.offers);
+    const offers = personalizeDemoOffers(structuredClone(scenario.offers), mandate);
     const decisions: Decision[] = [];
     const events: RunEvent[] = [];
     const baseTime = Date.parse("2026-07-11T10:00:00.000Z");
@@ -289,9 +346,45 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   return app;
 }
 
+function personalizeDemoOffers(offers: ReturnType<typeof loadScenario>["offers"], mandate: Mandate) {
+  const isOriginalFixture = mandate.product.query.toLocaleLowerCase().includes("nike dunk low")
+    && mandate.product.size === "EU 43"
+    && mandate.product.condition === "NEW"
+    && mandate.maxTotal?.currency === "EUR";
+  if (isOriginalFixture || !mandate.maxTotal) return offers;
+
+  const limit = mandate.maxTotal.amountMinor;
+  const currency = mandate.maxTotal.currency;
+  const ratios = [
+    { price: 0.95, shipping: 0.15, fees: 0.05 },
+    { price: 0.68, shipping: 0.04, fees: 0.01 },
+    { price: 0.65, shipping: 0.04, fees: 0.01 },
+  ];
+  return offers.map((offer, index) => {
+    const ratio = ratios[index] ?? ratios[2]!;
+    const price = Math.round(limit * ratio.price);
+    return {
+      ...offer,
+      product: {
+        brand: mandate.product.query,
+        model: "",
+        size: mandate.product.size ?? "",
+        condition: mandate.product.condition ?? "NEW",
+      },
+      price: { amountMinor: price, currency },
+      shipping: { amountMinor: Math.round(limit * ratio.shipping), currency },
+      fees: { amountMinor: Math.round(limit * ratio.fees), currency },
+      fxRateToBase: 1,
+      priceHistoryMinor: index === 1
+        ? [Math.round(limit * 0.7), Math.round(limit * 0.69), price]
+        : [Math.round(limit * 0.72), Math.round(limit * 0.7), Math.round(limit * 0.69)],
+    };
+  });
+}
+
 function getMandate(store: InMemoryStore, id: string): Mandate {
   const mandate = store.mandates.get(id);
-  if (!mandate) throw new ApiError(404, "MANDATE_NOT_FOUND", "Nie znaleziono mandatu.");
+  if (!mandate) throw new ApiError(404, "MANDATE_NOT_FOUND", "Nie znaleziono planu zakupu.");
   return mandate;
 }
 

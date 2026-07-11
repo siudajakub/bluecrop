@@ -1,6 +1,10 @@
 import type {
   CompileMandateResponse,
   Currency,
+  InterviewMessage,
+  InterviewResponse,
+  ProductSearchResponse,
+  PurchasePlan,
   Decision,
   Mandate,
   Receipt,
@@ -67,6 +71,24 @@ export function compileMandate(brief: string, options: CompileMandateOptions = {
     },
     [422],
   );
+}
+
+export function respondToInterview(messages: InterviewMessage[]) {
+  return request<InterviewResponse>("/api/interviews/respond", {
+    method: "POST",
+    body: JSON.stringify({ messages, baseCurrency: "EUR", destinationCountry: "PL" }),
+  });
+}
+
+export function getRealtimeToken() {
+  return request<{ value: string; expiresAt?: number; model: string }>("/api/realtime/token", { method: "POST" });
+}
+
+export function searchProducts(plan: PurchasePlan) {
+  return request<ProductSearchResponse>("/api/products/search", {
+    method: "POST",
+    body: JSON.stringify({ plan, destinationCountry: "PL" }),
+  });
 }
 
 export function approveMandate(mandate: Mandate) {

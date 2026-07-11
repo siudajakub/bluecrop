@@ -28,6 +28,9 @@ apps/web
 | --- | --- | --- | --- |
 | Schematy i kody powodów | Jakub | UI, evale | `packages/contracts` |
 | Brief i kompilacja mandatu | Jakub | UI | `POST /api/mandates/compile` |
+| Wywiad zakupowy | Jakub | UI | `POST /api/interviews/respond` |
+| Sesja głosowa | Jakub | UI | `POST /api/realtime/token` + WebRTC |
+| Wyszukiwanie propozycji | Jakub | UI | `POST /api/products/search` |
 | Monitoring i replay | Jakub | UI | `POST /api/runs`, `GET /api/runs/:id/events` |
 | Decyzje i trust receipt | Jakub | UI | zdarzenia run oraz `GET /api/receipts/:id` |
 | Widoki i stany interakcji | frontend owner | użytkownik | `apps/web` |
@@ -44,6 +47,36 @@ apps/web
   powodów bez uzgodnienia z konsumentem.
 
 ### Kompilacja mandatu
+
+Przed kompilacją UI może prowadzić wieloturowy wywiad. Jest to kompatybilne rozszerzenie: istniejący
+endpoint kompilacji nadal przyjmuje samodzielny `brief`.
+
+```json
+POST /api/interviews/respond
+{
+  "messages": [{ "role": "user", "content": "Chcę nauczyć się grać na gitarze" }],
+  "baseCurrency": "PLN",
+  "destinationCountry": "PL"
+}
+```
+
+Odpowiedź ma `status: "QUESTION"` i jedno lub dwa powiązane pytania albo `status: "READY"`,
+niepusty `brief` oraz `plan`. Plan zawiera cel, parametry z priorytetami i wybrane przez AI
+kategorie wyszukiwania wraz z osobnymi zapytaniami. UI wysyła całą widoczną historię, a backend
+nie ufa ukrytemu stanowi klienta.
+
+Przy `QUESTION` odpowiedź zawiera 2–5 przycisków w `options`, `questionNumber` i `maxQuestions`.
+Pole tekstowe pozostaje dostępne dla własnej odpowiedzi. Backend egzekwuje maksymalnie cztery
+rundy pytań; po limicie wymaga `READY`, kompletnego `brief` i niepustego `plan`.
+
+Po uzyskaniu kompletnego planu UI wywołuje `POST /api/products/search`. Backend obowiązkowo używa
+narzędzia OpenAI `web_search`; odpowiedź zawiera 3–8 propozycji z ceną tekstową, uzasadnieniem,
+ograniczeniami oraz bezpośrednim URL-em źródła. Linki są wyświetlane użytkownikowi jako klikalne.
+
+Tryb głosowy pobiera krótkotrwały sekret przez `POST /api/realtime/token`, po czym przeglądarka łączy
+się z OpenAI Realtime przez WebRTC. Standardowy klucz API pozostaje wyłącznie na backendzie.
+Transkrypcja obu stron trafia do tego samego widoku rozmowy i przed kompilacją jest ponownie
+sprawdzana przez endpoint wywiadu.
 
 ```json
 POST /api/mandates/compile
