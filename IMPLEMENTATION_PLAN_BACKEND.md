@@ -1,6 +1,6 @@
-# Deal Hunter — plan implementacji backendu
+# Deal Hunter — backend implementation plan
 
-## Docelowa struktura
+## Target structure
 
 ```text
 apps/api/src/
@@ -22,61 +22,62 @@ tests/
   contracts/ domain/ checkout/ evals/ api/
 ```
 
-## Wave 1 — uruchamialny kontrakt
+## Wave 1 — runnable contract
 
-1. Utworzyć root `package.json`, workspaces, wspólny `tsconfig` i skrypty `dev/check/test/build`.
-2. Utworzyć schematy Zod: `Money`, `Mandate`, `OfferEvent`, `Decision`, `ErrorEnvelope`, `Receipt`.
-3. Dodać Fastify, CORS dla lokalnego Next.js i `GET /health`.
-4. Zaimplementować `FixtureMandateCompiler` oraz endpoint compile/approve.
-5. Dodać in-memory store i stały zegar/scenario seed.
+1. Create the root `package.json`, workspaces, a shared `tsconfig`, and `dev/check/test/build` scripts.
+2. Create the Zod schemas: `Money`, `Mandate`, `OfferEvent`, `Decision`, `ErrorEnvelope`, `Receipt`.
+3. Add Fastify, CORS for the local Next.js, and `GET /health`.
+4. Implement `FixtureMandateCompiler` and the compile/approve endpoint.
+5. Add an in-memory store and a fixed clock/scenario seed.
 
-**Done:** curl tworzy i zatwierdza mandat bez OpenAI, a kontrakt można przekazać frontendowi.
+**Done:** curl creates and approves a mandate without OpenAI, and the contract can be handed to the
+frontend.
 
-## Wave 2 — pion decyzyjny
+## Wave 2 — decision vertical
 
-1. Zaimplementować czyste funkcje: przeliczenie waluty, wysyłka/opłaty, pełny koszt.
-2. Zaimplementować exact-variant matching i minimalne risk flags.
-3. Zaimplementować policy engine z priorytetem twardych blokad przed alertem/autonomią.
-4. Załadować trzy scenariusze i emitować zdarzenia według `sequence`.
-5. Dodać `POST /api/runs` i polling `GET /api/runs/:id/events?after=`.
+1. Implement pure functions: currency conversion, shipping/fees, full cost.
+2. Implement exact-variant matching and minimal risk flags.
+3. Implement the policy engine, prioritizing hard blocks before alert/autonomy.
+4. Load the three scenarios and emit events according to `sequence`.
+5. Add `POST /api/runs` and polling via `GET /api/runs/:id/events?after=`.
 
-**Done:** seed `20260711` zawsze daje walutową pułapkę, fałszywy rabat i poprawną ofertę.
+**Done:** seed `20260711` always yields a currency trap, a fake discount, and a valid offer.
 
-## Wave 3 — bezpieczna akcja
+## Wave 3 — safe action
 
-1. Dodać rewalidację mandatu, oferty, kosztu, stocku i zgody.
-2. Zapisać wynik pierwszej mutacji pod `idempotencyKey` przed zwróceniem odpowiedzi.
-3. Dodać kontrolowane zdarzenie `PRICE_CHANGED` do wariantu blokującego.
-4. Generować immutable receipt z wejściami, wersjami, decyzją i powodami.
-5. Dodać endpoint checkout oraz pobieranie receipt.
+1. Add revalidation of the mandate, offer, cost, stock, and consent.
+2. Store the result of the first mutation under `idempotencyKey` before returning the response.
+3. Add a controlled `PRICE_CHANGED` event to the blocking variant.
+4. Generate an immutable receipt with inputs, versions, decision, and reasons.
+5. Add the checkout endpoint and receipt retrieval.
 
-**Done:** zmiana blokuje zakup, a dwa retry zwracają ten sam purchase i receipt.
+**Done:** a change blocks the purchase, and two retries return the same purchase and receipt.
 
-## Wave 4 — prawdziwy OpenAI
+## Wave 4 — real OpenAI
 
-1. Dodać SDK `openai` i `OpenAIMandateCompiler` za wspólnym interfejsem.
-2. Użyć Responses API oraz Structured Outputs z tym samym schematem Zod co kontrakty.
-3. Prompt ograniczyć do ekstrakcji intencji i niejednoznaczności; bez kalkulacji ani decyzji.
-4. Obsłużyć refusal, timeout i błąd usługi jako domenowy error envelope.
-5. Dodać `.env.example`; prawdziwy klucz wprowadzić lokalnie dopiero podczas integracji.
+1. Add the `openai` SDK and `OpenAIMandateCompiler` behind a shared interface.
+2. Use the Responses API and Structured Outputs with the same Zod schema as the contracts.
+3. Limit the prompt to intent extraction and ambiguity; no calculation or decisions.
+4. Handle refusal, timeout, and service error as a domain error envelope.
+5. Add `.env.example`; introduce the real key locally only during integration.
 
-**Done:** ten sam brief przechodzi zarówno przez OpenAI, jak i fixture compiler, zwracając ten sam
-typ odpowiedzi.
+**Done:** the same brief passes through both the OpenAI and fixture compilers, returning the same
+response type.
 
-## Wave 5 — weryfikacja i demo
+## Wave 5 — verification and demo
 
-1. Unit: money, total cost, matcher, policy precedence i revalidation.
-2. Contract: każdy fixture przechodzi schemat Zod.
+1. Unit: money, total cost, matcher, policy precedence, and revalidation.
+2. Contract: every fixture passes the Zod schema.
 3. Integration: compile → approve → run → poll → checkout → receipt.
-4. Invariants: brak przekroczeń limitu i brak podwójnych zakupów.
-5. Dodać `npm run demo:reset` oraz jeden smoke script dla pełnego golden path.
+4. Invariants: no cap violations and no double purchases.
+5. Add `npm run demo:reset` and a single smoke script for the full golden path.
 
-## Kolejność cięć
+## Cut order
 
-1. Usunąć opóźnienia czasowe replay; zachować kolejność zdarzeń.
-2. Pokazać evale w terminalu zamiast endpointu/panelu.
-3. Ograniczyć semantic matching do exact SKU + rozmiaru.
-4. Ograniczyć AI do jednego briefu demonstracyjnego.
-5. Zmienić `AUTO_BUY` na `ASK_USER`, jeśli niezmienniki checkoutu nie przechodzą.
+1. Remove replay time delays; keep the event order.
+2. Show evals in the terminal instead of an endpoint/panel.
+3. Limit semantic matching to exact SKU + size.
+4. Limit the AI to a single demo brief.
+5. Switch `AUTO_BUY` to `ASK_USER` if the checkout invariants do not pass.
 
-Nie wycinać: pełnego kosztu, zatwierdzonej wersji mandatu, rewalidacji, idempotencji ani receipt.
+Do not cut: full cost, the approved mandate version, revalidation, idempotency, or the receipt.

@@ -6,7 +6,7 @@ import { loadConfig } from "../apps/api/src/config.js";
 import { FixtureMandateCompiler } from "../apps/api/src/services/mandate-compiler.js";
 import type { OfferScraper } from "../apps/api/src/services/offer-scraper.js";
 
-const brief = "Nike Dunk Low, rozmiar 43, nowe, bez resellerów, maksymalnie 80 EUR z dostawą, kup automatycznie przy niskim stanie";
+const brief = "Nike Dunk Low, size 43, new, no resellers, maximum 80 EUR with delivery, auto-buy on low stock";
 
 describe("Deal Hunter API", () => {
   let app: FastifyInstance;
@@ -23,7 +23,7 @@ describe("Deal Hunter API", () => {
     const response = await app.inject({
       method: "POST",
       url: "/api/mandates/compile",
-      payload: { brief: "Nike Dunk Low nowe", baseCurrency: "EUR", destinationCountry: "PL" },
+      payload: { brief: "Nike Dunk Low new", baseCurrency: "EUR", destinationCountry: "PL" },
     });
     expect(response.statusCode).toBe(422);
     expect(response.json().error.code).toBe("AMBIGUOUS_MANDATE");
@@ -133,6 +133,62 @@ describe("Deal Hunter API", () => {
     });
   });
 
+  it("prefers structural maxTotal and purchaseBy over the brief", async () => {
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/mandates/compile",
+      payload: {
+        brief,
+        baseCurrency: "EUR",
+        destinationCountry: "PL",
+        maxTotal: { amountMinor: 9000, currency: "EUR" },
+        purchaseBy: "2026-08-01",
+      },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().mandate.maxTotal).toEqual({ amountMinor: 9000, currency: "EUR" });
+    expect(response.json().mandate.purchaseBy).toBe("2026-08-01");
+  });
+
+  it("resolves the maxTotal ambiguity when the budget arrives structurally", async () => {
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/mandates/compile",
+      payload: {
+        brief: "Nike Dunk Low, size 43, new",
+        baseCurrency: "EUR",
+        destinationCountry: "PL",
+        maxTotal: { amountMinor: 8000, currency: "EUR" },
+      },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().ambiguities).toEqual([]);
+    expect(response.json().mandate.maxTotal).toEqual({ amountMinor: 8000, currency: "EUR" });
+  });
+
+  it("lists receipts newest first and starts empty", async () => {
+    const empty = await app.inject({ method: "GET", url: "/api/receipts" });
+    expect(empty.statusCode).toBe(200);
+    expect(empty.json()).toEqual({ receipts: [] });
+
+    const flow = await startGoldenPath(app, "receipts");
+    const checkout = await app.inject({
+      method: "POST",
+      url: `/api/decisions/${flow.winner.id}/checkout`,
+      payload: {
+        mandateVersion: flow.winner.mandateVersion,
+        offerVersion: flow.winner.offerVersion,
+        idempotencyKey: "checkout-receipts",
+      },
+    });
+    expect(checkout.statusCode).toBe(200);
+
+    const listed = await app.inject({ method: "GET", url: "/api/receipts" });
+    expect(listed.statusCode).toBe(200);
+    expect(listed.json().receipts).toHaveLength(1);
+    expect(listed.json().receipts[0].id).toBe(checkout.json().receiptId);
+  });
+
   it("executes the golden path and makes checkout idempotent", async () => {
     const flow = await startGoldenPath(app, "success");
     expect(flow.actions).toEqual(["IGNORE", "IGNORE", "AUTO_BUY"]);
@@ -171,7 +227,7 @@ describe("Deal Hunter API", () => {
       method: "POST",
       url: "/api/mandates/compile",
       payload: {
-        brief: "Używany zestaw gitarowy, maksymalnie 2500 PLN z dostawą, zapytaj przed zakupem",
+        brief: "Used guitar bundle, up to 2500 PLN including delivery, ask before buying",
         baseCurrency: "PLN",
         destinationCountry: "PL",
       },

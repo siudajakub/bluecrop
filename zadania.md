@@ -1,47 +1,49 @@
-# Backlog hackathonu: Deal Hunter
+# Hackathon backlog: Deal Hunter
 
-## Cel
+## Goal
 
-Dostarczyć demonstracyjne MVP silnika delegowanego zakupu. System interpretuje mandat, przetwarza symulowane oferty, oblicza koszt końcowy, egzekwuje deterministyczne limity i wykonuje audytowalny zakup testowy.
+Deliver a demo MVP of a delegated-purchase engine. The system interprets a mandate, processes
+simulated offers, computes the final cost, enforces deterministic caps, and executes an auditable
+test purchase.
 
-## P0: pełny przepływ
+## P0: full flow
 
-- [x] Zdefiniować schematy `MandateVersion`, `CanonicalOffer`, `Decision` i `AuditReceipt`.
-- [x] Zaimplementować formularz briefu i jawny przegląd mandatu w testowym UI.
-- [x] Zintegrować OpenAI Responses API z walidowanymi danymi strukturalnymi (adapter gotowy; live test po dodaniu klucza).
-- [x] Zbudować deterministyczny symulator z seedem i możliwością odtworzenia przebiegu.
-- [x] Zaimplementować normalizację i dopasowanie produktu oraz wariantu dla MVP.
-- [x] Zbudować kalkulator kosztu końcowego z danymi testowymi FX, wysyłki i opłat.
-- [x] Wykrywać ryzyka MVP: fałszywy rabat, reseller, nieważny kupon, trust i brak towaru przy checkout.
-- [x] Zaimplementować deterministyczny silnik polityk.
-- [x] Dodać ponowną walidację przed zakupem i idempotencję.
-- [x] Zapisywać dziennik zdarzeń w pamięci i generować trust receipt.
-- [x] Pokazać pełną oś czasu w interfejsie.
+- [x] Define the `MandateVersion`, `CanonicalOffer`, `Decision`, and `AuditReceipt` schemas.
+- [x] Implement the brief form and the explicit mandate review in the test UI.
+- [x] Integrate the OpenAI Responses API with validated structured data (adapter ready; live test after adding a key).
+- [x] Build a deterministic simulator with a seed and the ability to replay a run.
+- [x] Implement product and variant normalization and matching for the MVP.
+- [x] Build a final-cost calculator with test FX, shipping, and fee data.
+- [x] Detect MVP risks: fake discount, reseller, invalid coupon, trust, and out-of-stock at checkout.
+- [x] Implement a deterministic policy engine.
+- [x] Add pre-purchase revalidation and idempotency.
+- [x] Record an in-memory event log and generate a trust receipt.
+- [x] Show the full timeline in the interface.
 
-## P0: jakość i bezpieczeństwo
+## P0: quality and safety
 
-- [x] Przygotować 12 przypadków testowych z oczekiwanymi decyzjami; obejmują limit, wariant,
-  sprzedawcę, kupon, trust, zmianę ceny i duplikat.
-- [x] Przetestować limit wydatku, zmianę ceny i zduplikowany checkout; test cofniętej zgody pozostaje.
-- [x] Zagwarantować w obecnym zestawie testowym `hard_cap_violations = 0` i `duplicate_buys = 0`.
-- [x] Obliczać bieżące safety counters: false-buy rate, hard-cap violations i duplicate buys.
-- [ ] Umożliwić odtworzenie nieudanych przypadków.
+- [x] Prepare 12 test cases with expected decisions; covering cap, variant, merchant, coupon, trust,
+  price change, and duplicate.
+- [x] Test the spending cap, price change, and duplicate checkout; the revoked-consent test remains.
+- [x] Guarantee `hard_cap_violations = 0` and `duplicate_buys = 0` in the current test set.
+- [x] Compute the current safety counters: false-buy rate, hard-cap violations, and duplicate buys.
+- [ ] Enable replaying of failed cases.
 
-## P1: jakość demonstracji
+## P1: demonstration quality
 
-- [x] Przygotować scenariusz pułapki walutowej z ofertą z Wielkiej Brytanii.
-- [x] Przygotować scenariusz fałszywego rabatu.
-- [x] Przygotować prawidłową ofertę z Holandii i niskim stanem magazynowym.
-- [x] Dodać kontrolowaną zmianę ceny podczas demonstracji.
-- [ ] Po hackathonie: pokazać drugi adapter sprzedawcy albo drugą kategorię produktu.
-- [x] Przygotować scenariusz prezentacji na 2–3 minuty i wariant działający całkowicie lokalnie.
+- [x] Prepare the currency-trap scenario with a UK offer.
+- [x] Prepare the fake-discount scenario.
+- [x] Prepare a valid Netherlands offer with low stock.
+- [x] Add a controlled price change during the demonstration.
+- [ ] After the hackathon: show a second merchant adapter or a second product category.
+- [x] Prepare a 2–3 minute presentation scenario and a variant that runs fully locally.
 
-## Poza zakresem
+## Out of scope
 
-- scraping na żywo;
-- prawdziwe płatności;
-- globalne obliczanie podatków i ceł;
-- pełny marketplace;
-- obsługa wielu użytkowników;
-- zwroty i wsparcie posprzedażowe;
-- architektura mikroserwisowa.
+- live scraping;
+- real payments;
+- global tax and duty calculation;
+- a full marketplace;
+- multi-user support;
+- returns and after-sales support;
+- a microservice architecture.

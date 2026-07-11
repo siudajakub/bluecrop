@@ -8,7 +8,7 @@ try {
     method: "POST",
     url: "/api/mandates/compile",
     payload: {
-      brief: "Nike Dunk Low, rozmiar 43, nowe, bez resellerów, maksymalnie 80 EUR z dostawą, kup automatycznie przy niskim stanie",
+      brief: "Nike Dunk Low, size 43, new, no resellers, maximum 80 EUR with delivery, auto-buy on low stock",
       baseCurrency: "EUR",
       destinationCountry: "PL"
     }

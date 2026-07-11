@@ -1,15 +1,16 @@
 # Bluecrop — Deal Hunter
 
-Deal Hunter to demonstracyjny agent zakupowy, który prowadzi wywiad, tworzy jawny plan zakupu, wyszukuje produkty, ocenia
-zmieniające się oferty i wykonuje testowy zakup wyłącznie w granicach zatwierdzonej zgody.
+Deal Hunter is a demo shopping agent that interviews the user, compiles an explicit purchase
+mandate, searches for products, evaluates changing offers, and executes a test purchase strictly
+within the limits of the approved consent.
 
-Repo zawiera lokalny pion hackathonowy z testowym UI Next.js i API Fastify. Sprzedawcy i płatność
-są symulowane, ale pełny koszt, policy engine, rewalidacja, idempotencja i audit receipt działają
-w kodzie deterministycznym.
+The repo contains a local hackathon vertical with a test Next.js UI and a Fastify API. Merchants and
+payment are simulated, but the full cost calculation, policy engine, revalidation, idempotency, and
+audit receipt all run in deterministic code.
 
-## Szybki start
+## Quick start
 
-Wymagany jest Node.js 22 lub nowszy.
+Node.js 22 or newer is required.
 
 ```bash
 npm install
@@ -20,46 +21,47 @@ npm run dev
 - UI: `http://127.0.0.1:3000`
 - API: `http://127.0.0.1:3001`
 
-Sprawdzenie gotowości API:
+Check that the API is ready:
 
 ```bash
 curl http://127.0.0.1:3001/health
 ```
 
-Bez klucza dostępny jest tryb `fixture`. Po ustawieniu `OPENAI_API_KEY` aplikacja domyślnie używa prawdziwego modelu AI.
+`MANDATE_COMPILER_MODE=fixture` runs by default, so no OpenAI key is needed. Once
+`OPENAI_API_KEY` is set the app defaults to the real AI model.
 
-## Testowe UI
+## Test UI
 
-Pojedynczy ekran prowadzi przez cały przepływ:
+A single screen walks through the whole flow:
 
-1. przejdź adaptacyjny wywiad tekstowy albo głosowy;
-2. sprawdź podsumowanie i skompiluj brief;
-3. zatwierdź plan zakupu;
-4. uruchom monitoring;
-5. wykonaj poprawny checkout albo najpierw podnieś cenę;
-6. sprawdź timeline, trust receipt i safety counters.
+1. run the adaptive interview by text or voice;
+2. review the summary and compile the brief;
+3. approve the mandate;
+4. start monitoring;
+5. run a valid checkout, or first raise the price;
+6. inspect the timeline, trust receipt, and safety counters.
 
-Przycisk „Cofnij zgodę” pozwala sprawdzić drugą blokadę rewalidacji. „Reset demo” czyści stan
-backendu i interfejsu.
+The "Revoke consent" button lets you exercise the second revalidation lock. "Reset demo" clears the
+backend and interface state.
 
 ## Demo
 
-Pełny golden path można sprawdzić bez uruchamiania serwera:
+The full golden path can be checked without starting the server:
 
 ```bash
 npm run demo:smoke
 ```
 
-Oczekiwany wynik to trzy decyzje:
+The expected result is three decisions:
 
 ```text
 IGNORE → IGNORE → AUTO_BUY
 ```
 
-Pierwsza oferta przekracza limit po FX, dostawie i opłatach. Druga ma fałszywy rabat. Trzecia
-spełnia plan zakupu, mieści się w 80 EUR i ma niski stan magazynowy.
+The first offer exceeds the cap after FX, delivery, and fees. The second has a fake discount. The
+third satisfies the mandate, fits within 80 EUR, and has low stock.
 
-Stan działającego serwera resetuje:
+Reset the state of a running server:
 
 ```bash
 npm run demo:reset
@@ -67,7 +69,7 @@ npm run demo:reset
 
 ## OpenAI
 
-Klucz pozostaje wyłącznie w backendzie. Nie dodawaj `.env` do repozytorium.
+The key stays exclusively in the backend. Do not commit `.env` to the repository.
 
 ```bash
 MANDATE_COMPILER_MODE=openai
@@ -77,26 +79,27 @@ OPENAI_REALTIME_MODEL=gpt-realtime-2.1
 OFFER_ENRICHMENT_MODE=html
 ```
 
-Adapter używa Responses API i Structured Outputs z tym samym schematem Zod, który waliduje
-kontrakt aplikacji. Model prowadzi wywiad, generuje parametry i kategorie wyszukiwania, a następnie
-używa narzędzia `web_search` do znalezienia aktualnych propozycji z klikalnymi źródłami. Nie liczy
-deterministycznych granic bezpieczeństwa ani nie autoryzuje zakupu.
-Jeżeli wynik wyszukiwania nie zawiera dopasowanego obrazu, backend pobiera ograniczony fragment
-bezpośredniej strony oferty i odczytuje `og:image` lub `twitter:image`. Pobieranie sprawdza HTTPS,
-przekierowania, publiczny adres DNS, typ odpowiedzi i limit bajtów; jego awaria nie przerywa całego
-wyszukiwania. `OFFER_ENRICHMENT_ALLOWED_HOSTS` może opcjonalnie ograniczyć ten fallback do listy
-hostów rozdzielonych przecinkami, a `OFFER_ENRICHMENT_MODE=disabled` wyłącza go całkowicie.
-Każde pytanie zawiera gotowe opcje odpowiedzi, a wywiad ma twardy limit czterech rund. Po
-osiągnięciu limitu model musi utworzyć najlepszy możliwy plan i rozpocząć wyszukiwanie.
-Rozmowa głosowa używa WebRTC i krótkotrwałego sekretu sesji wydawanego przez backend. Standardowy
-`OPENAI_API_KEY` nigdy nie jest zwracany do przeglądarki. Mikrofon wymaga zgody użytkownika i jest
-zatrzymywany po zakończeniu rozmowy, resecie połączenia albo opuszczeniu widoku.
+The adapter uses the Responses API and Structured Outputs with the same Zod schema that validates
+the application contract. The model runs the interview, generates the search parameters and
+categories, and then uses the `web_search` tool to find current product pages with clickable
+sources. It never computes the deterministic safety limits and never authorizes the purchase.
+If a search result has no matching image, the backend fetches a bounded fragment of the offer page
+and reads `og:image` or `twitter:image`. The fetch enforces HTTPS, redirect checks, public DNS,
+response type, and a byte limit; its failure never aborts the whole search.
+`OFFER_ENRICHMENT_ALLOWED_HOSTS` can optionally restrict this fallback to a comma-separated host
+list, and `OFFER_ENRICHMENT_MODE=disabled` turns it off entirely.
+Every question ships with ready-made answer options and the interview has a hard limit of four
+rounds. Once the limit is reached the model must produce the best possible plan and start the
+search.
+The voice conversation uses WebRTC and a short-lived session secret issued by the backend. The
+standard `OPENAI_API_KEY` is never returned to the browser. The microphone requires user consent
+and is stopped when the conversation ends, the connection resets, or the view is left.
 
-### Pobieranie ofert ze sklepów
+### Scraping shop offers
 
-Backend może opcjonalnie pobrać publiczne strony sklepów i użyć OpenAI Structured Outputs do
-wyodrębnienia ofert. Klucz pozostaje wyłącznie po stronie API. Scraper jest domyślnie wyłączony i
-akceptuje tylko jawnie dozwolone hosty HTTPS:
+The backend can optionally fetch public shop pages and use OpenAI Structured Outputs to extract
+offers. The key stays exclusively on the API side. The scraper is disabled by default and accepts
+only explicitly allowed HTTPS hosts:
 
 ```bash
 OFFER_SCRAPER_MODE=openai
@@ -106,7 +109,7 @@ SCRAPER_ALLOWED_HOSTS=www.morele.net,allegro.pl,www.olx.pl
 SCRAPER_MAX_HTML_BYTES=1000000
 ```
 
-Przykładowe wywołanie:
+Example call:
 
 ```bash
 curl -X POST http://127.0.0.1:3001/api/offers/scrape \
@@ -114,26 +117,27 @@ curl -X POST http://127.0.0.1:3001/api/offers/scrape \
   -d '{"urls":["https://www.morele.net/wyszukiwarka/?q=laptop"]}'
 ```
 
-Odpowiedź zawiera `offers` zgodne ze wspólnym schematem Zod oraz błędy poszczególnych stron w
-`errors`. OpenAI jedynie ekstrahuje pola widoczne na stronie. Pobieranie HTML, allowlista hostów,
-ochrona przed SSRF, limit rozmiaru i walidacja odpowiedzi pozostają deterministyczne w backendzie.
-Pola niewidoczne na stronie mają wartość `null`; model nie wylicza `riskScore` i nie autoryzuje zakupu.
+The response contains `offers` matching the shared Zod schema plus per-page failures in `errors`.
+OpenAI only extracts fields visible on the page. HTML fetching, the host allowlist, SSRF
+protection, the size limit, and response validation stay deterministic in the backend. Fields not
+visible on the page are `null`; the model does not derive `riskScore` and does not authorize any
+purchase.
 
-Wdrożenie powinno respektować regulaminy sklepów, `robots.txt`, limity zapytań i obowiązujące prawo.
-Strony wymagające JavaScriptu, logowania lub CAPTCHA mogą zwrócić błąd i wymagają osobnego,
-autoryzowanego adaptera przeglądarkowego lub oficjalnego feedu/API sprzedawcy.
+A deployment should respect shop terms, `robots.txt`, rate limits, and applicable law. Pages that
+require JavaScript, login, or CAPTCHA may fail and need a separate authorized browser adapter or an
+official merchant feed/API.
 
-## Komendy
+## Commands
 
 ```bash
-npm run check       # TypeScript + walidacja dokumentów agentowych
-npm test            # testy domeny i API
-npm run build       # produkcyjne buildy API i Next.js
-npm start           # uruchomienie obu produkcyjnych aplikacji
-npm run demo:smoke  # pełny lokalny golden path
+npm run check       # TypeScript + agent document validation
+npm test            # domain and API tests
+npm run build       # production builds of the API and Next.js
+npm start           # run both production apps
+npm run demo:smoke  # full local golden path
 ```
 
-## Architektura
+## Architecture
 
 ```text
 Next.js UI
@@ -147,27 +151,27 @@ Fastify API
     └── in-memory audit receipts
 ```
 
-Najważniejsze katalogi:
+Key directories:
 
-| Ścieżka | Odpowiedzialność |
+| Path | Responsibility |
 | --- | --- |
-| `apps/api` | Fastify, endpointy, konfiguracja i adaptery |
-| `apps/web` | testowy interfejs Next.js i klient HTTP |
-| `packages/contracts` | schematy Zod oraz typy UI–backend |
-| `packages/domain` | koszt, matching, ryzyko i decyzje |
-| `packages/checkout` | rewalidacja, idempotencja i receipt |
-| `fixtures/scenarios` | odtwarzalne dane demo |
-| `tests` | testy domenowe i pełny przepływ API |
+| `apps/api` | Fastify, endpoints, configuration, and adapters |
+| `apps/web` | test Next.js interface and HTTP client |
+| `packages/contracts` | Zod schemas and UI–backend types |
+| `packages/domain` | cost, matching, risk, and decisions |
+| `packages/checkout` | revalidation, idempotency, and receipt |
+| `fixtures/scenarios` | reproducible demo data |
+| `tests` | domain tests and the full API flow |
 
-Szczegółowe przykłady request/response są w
-[kontrakcie UI–backend](docs/hackathon/contracts.md). Scenariusz prezentacji znajduje się w
-[runbooku demo](docs/hackathon/demo.md).
+Detailed request/response examples are in the
+[UI–backend contract](docs/hackathon/contracts.md). The presentation scenario is in the
+[demo runbook](docs/hackathon/demo.md).
 
-## Ograniczenia MVP
+## MVP limitations
 
-- stan znika po restarcie procesu;
-- brak prawdziwego scrapingu i płatności;
-- jedno lokalne demo, bez logowania i wielu użytkowników;
-- kontrolowane mutacje ofert istnieją wyłącznie na potrzeby prezentacji.
+- state is lost when the process restarts;
+- no real scraping or payment;
+- a single local demo, without login or multiple users;
+- controlled offer mutations exist only for the presentation.
 
-Ostatni przegląd: 2026-07-11.
+Last reviewed: 2026-07-11.

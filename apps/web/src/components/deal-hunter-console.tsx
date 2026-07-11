@@ -18,6 +18,7 @@ import {
   compileMandate,
   getEvalSummary,
   getReceipt,
+  listReceipts,
   mutateWinner,
   pollEvents,
   resetDemo,
@@ -44,7 +45,7 @@ import {
 
 interface ShoppingContext {
   budget?: { amount: number; currency: Currency; label: string };
-  timing?: { label: string; briefHint: string };
+  timing?: { label: string; purchaseBy: string | null };
 }
 
 type BusyAction = 'compile' | 'approve' | 'run' | 'mutate' | 'checkout' | 'revoke' | null;
@@ -87,11 +88,14 @@ function botError(error: unknown): ChatMessage {
   return { id: uid(), sender: 'bot', kind: 'error', code: 'UNEXPECTED_ERROR', text, reasonCodes: [] };
 }
 
-function withContextHints(brief: string, context: ShoppingContext) {
-  const hints: string[] = [];
-  if (context.budget) hints.push(`maximum ${context.budget.amount} ${context.budget.currency}`);
-  if (context.timing) hints.push(context.timing.briefHint);
-  return hints.length ? `${brief}, ${hints.join(', ')}` : brief;
+function compileOptionsFor(context: ShoppingContext) {
+  return {
+    baseCurrency: context.budget?.currency,
+    maxTotal: context.budget
+      ? { amountMinor: Math.round(context.budget.amount * 100), currency: context.budget.currency }
+      : undefined,
+    purchaseBy: context.timing ? context.timing.purchaseBy : undefined,
+  };
 }
 
 function sleep(ms: number) {
@@ -172,8 +176,15 @@ export function DealHunterConsole() {
   }, [messages.length, isThinking]);
 
   useEffect(() => {
+    // Load purchase history once on mount so it survives page reloads.
+    void refreshReceipts();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
     if (activeSidebarTab !== 'purchases') return;
     void refreshMetrics();
+    void refreshReceipts();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSidebarTab]);
 
@@ -194,6 +205,21 @@ export function DealHunterConsole() {
       setMetrics(await getEvalSummary());
     } catch {
       // Safety counters are best-effort; the chat surfaces API errors already.
+    }
+  }
+
+  async function refreshReceipts() {
+    try {
+      const response = await listReceipts();
+      setPurchases(prev => {
+        const merged = [...response.receipts];
+        for (const receipt of prev) {
+          if (!merged.some(item => item.id === receipt.id)) merged.push(receipt);
+        }
+        return merged.sort((a, b) => b.completedAt.localeCompare(a.completedAt) || b.id.localeCompare(a.id));
+      });
+    } catch {
+      // Purchase history is best-effort; session receipts still render.
     }
   }
 
@@ -245,13 +271,11 @@ export function DealHunterConsole() {
     }
 
     const answeringAmbiguities = chat.ambiguities.length > 0 && chat.pendingBrief;
-    const brief = answeringAmbiguities
-      ? `${chat.pendingBrief}, ${userText}`
-      : withContextHints(userText, chat.context);
+    const brief = answeringAmbiguities ? `${chat.pendingBrief}, ${userText}` : userText;
 
     setChatBusy(activeId, 'compile');
     try {
-      const response = await compileMandate(brief, { baseCurrency: chat.context.budget?.currency });
+      const response = await compileMandate(brief, compileOptionsFor(chat.context));
       updateChat(activeId, c => ({
         ...c,
         mandate: response.mandate,
@@ -519,7 +543,7 @@ export function DealHunterConsole() {
     e.preventDefault();
 
     if (timeChoice === 'now') {
-      setContextValue('timing', { label: 'Buy now', briefHint: 'buy now, auto-buy when stock is low' });
+      setContextValue('timing', { label: 'Buy now', purchaseBy: null });
       return;
     }
 
@@ -530,7 +554,7 @@ export function DealHunterConsole() {
       year: 'numeric'
     }).format(new Date(`${purchaseDate}T12:00:00`));
 
-    setContextValue('timing', { label: `Buy by ${formattedDate}`, briefHint: `buy by ${purchaseDate}, ask before buying` });
+    setContextValue('timing', { label: `Buy by ${formattedDate}`, purchaseBy: purchaseDate });
   };
 
   const renderBotMessage = (chat: Chat, message: ChatMessage) => {

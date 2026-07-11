@@ -22,6 +22,11 @@ export function formatMoney(money: Money) {
   return new Intl.NumberFormat('en', { style: 'currency', currency: money.currency }).format(money.amountMinor / 100);
 }
 
+function formatDate(isoDate: string) {
+  return new Intl.DateTimeFormat('en', { day: 'numeric', month: 'short', year: 'numeric' })
+    .format(new Date(`${isoDate}T12:00:00`));
+}
+
 const AUTONOMY_LABELS: Record<Mandate['autonomy'], string> = {
   ALERT_ONLY: 'Alert only',
   ASK_BEFORE_BUY: 'Ask before buying',
@@ -66,6 +71,12 @@ export function MandateCard({
           <dt>Max total</dt>
           <dd>{mandate.maxTotal ? formatMoney(mandate.maxTotal) : 'no cap'}</dd>
         </div>
+        {mandate.purchaseBy && (
+          <div>
+            <dt>Purchase by</dt>
+            <dd>{formatDate(mandate.purchaseBy)}</dd>
+          </div>
+        )}
         <div>
           <dt>Autonomy</dt>
           <dd>{AUTONOMY_LABELS[mandate.autonomy]}</dd>

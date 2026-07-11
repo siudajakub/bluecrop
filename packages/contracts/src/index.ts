@@ -16,6 +16,7 @@ export const MandateDraftSchema = z.object({
     condition: z.enum(["NEW", "USED"]).nullable(),
   }),
   maxTotal: MoneySchema.nullable(),
+  purchaseBy: z.string().nullable(),
   sellerPolicy: z.object({ allowResellers: z.boolean() }),
   autonomy: z.enum(["ALERT_ONLY", "ASK_BEFORE_BUY", "AUTO_BUY_IF_LOW_STOCK"]),
   ambiguities: z.array(
@@ -40,6 +41,10 @@ export const CompileMandateRequestSchema = z.object({
   brief: z.string().min(8),
   baseCurrency: CurrencySchema.default("EUR"),
   destinationCountry: z.string().length(2).default("PL"),
+  /** Structural budget cap. When provided it always wins over anything parsed from the brief. */
+  maxTotal: MoneySchema.optional(),
+  /** Structural purchase deadline (ISO date, YYYY-MM-DD) or explicit null for "buy now". Wins over the brief. */
+  purchaseBy: z.string().nullable().optional(),
 });
 export type CompileMandateRequest = z.infer<typeof CompileMandateRequestSchema>;
 
@@ -209,6 +214,7 @@ export const ReasonCodeSchema = z.enum([
   "INVALID_COUPON",
   "INSUFFICIENT_TRUST",
   "APPROVAL_REQUIRED",
+  "DEADLINE_PASSED",
 ]);
 export type ReasonCode = z.infer<typeof ReasonCodeSchema>;
 
@@ -270,6 +276,11 @@ export const ReceiptSchema = z.object({
   completedAt: z.string().datetime(),
 });
 export type Receipt = z.infer<typeof ReceiptSchema>;
+
+export const ListReceiptsResponseSchema = z.object({
+  receipts: z.array(ReceiptSchema),
+});
+export type ListReceiptsResponse = z.infer<typeof ListReceiptsResponseSchema>;
 
 export const ErrorEnvelopeSchema = z.object({
   error: z.object({

@@ -1,54 +1,59 @@
-# ADR-001: Wybór ścieżki Solidgate i modularnego monolitu
+# ADR-001: Choosing the Solidgate path and a modular monolith
 
-- Status: zaakceptowany roboczo
-- Data: 2026-07-11
-- Zakres: weekendowy hackathon OpenAI
+- Status: tentatively accepted
+- Date: 2026-07-11
+- Scope: OpenAI weekend hackathon
 
-## Kontekst
+## Context
 
-Zespół wybiera między wąskim agentem deal-huntingowym Solidgate a szerokim workflow transakcyjnym Boski. Celem jest działające, mierzalne demo, które pokazuje agentowość, zgodę użytkownika i bezpieczną akcję.
+The team is choosing between the narrow Solidgate deal-hunting agent and the broad Boski transactional
+workflow. The goal is a working, measurable demo that shows agency, user consent, and safe action.
 
-## Decyzja
+## Decision
 
-Wybieramy ścieżkę Solidgate i pozycjonujemy rozwiązanie jako **Delegated Purchase Policy Engine** z pionowym use case’em deal hunting.
+We choose the Solidgate path and position the solution as a **Delegated Purchase Policy Engine** with
+deal hunting as the vertical use case.
 
-Implementujemy modularny monolit TypeScript z osobnym procesem symulatora/workerem tylko wtedy, gdy wymaga tego background flow. Runtime modelowy opieramy na Responses API, function calling i walidowanych wyjściach strukturalnych.
+We implement a modular TypeScript monolith with a separate simulator process/worker only when a
+background flow requires it. We base the model runtime on the Responses API, function calling, and
+validated structured outputs.
 
-## Zasady architektoniczne
+## Architectural principles
 
-1. LLM interpretuje, dopasowuje semantycznie i wyjaśnia.
-2. Kod deterministyczny liczy, egzekwuje hard caps i autoryzuje.
-3. Żaden tool call modelu nie omija policy engine.
-4. Każda zgoda i decyzja są wersjonowane oraz odtwarzalne.
-5. Checkout jest idempotentny i poprzedzony rewalidacją.
-6. Symulator ma seed, replay i jawne fixture’y.
-7. Evale są częścią produktu demonstracyjnego, nie dodatkiem po implementacji.
+1. The LLM interprets, matches semantically, and explains.
+2. Deterministic code computes, enforces hard caps, and authorizes.
+3. No model tool call bypasses the policy engine.
+4. Every consent and decision is versioned and reproducible.
+5. Checkout is idempotent and preceded by revalidation.
+6. The simulator has a seed, replay, and explicit fixtures.
+7. Evals are part of the demo product, not an add-on after implementation.
 
-## Konsekwencje pozytywne
+## Positive consequences
 
-- Jedna spójna historia demo.
-- Niskie ryzyko zależności od zewnętrznych sklepów i płatności.
-- Jasna granica bezpieczeństwa.
-- Możliwość pokazania wyników na eval set.
-- Modularność umożliwia późniejsze adaptery merchantów i szerszy lifecycle.
+- One coherent demo story.
+- Low risk of depending on external stores and payments.
+- A clear safety boundary.
+- The ability to show results on an eval set.
+- Modularity enables later merchant adapters and a broader lifecycle.
 
-## Konsekwencje negatywne
+## Negative consequences
 
-- Demo nie dowodzi działania na otwartym internecie.
-- Generalizacja musi zostać pokazana przez schematy i adaptery, nie skalę danych.
-- Uproszczone cła, FX i ryzyko muszą być jawnie opisane jako fixture’y.
-- Nie realizujemy pełnego post-purchase lifecycle z Boski.
+- The demo does not prove operation on the open internet.
+- Generalization must be shown through schemas and adapters, not data scale.
+- Simplified duties, FX, and risk must be explicitly labeled as fixtures.
+- We do not implement Boski's full post-purchase lifecycle.
 
-## Odrzucone warianty
+## Rejected options
 
-### Pełny Boski lifecycle
+### Full Boski lifecycle
 
-Odrzucony dla weekendowego MVP ze względu na liczbę domen i failure modes. Może stać się kierunkiem po hackathonie.
+Rejected for a weekend MVP because of the number of domains and failure modes. It may become a
+direction after the hackathon.
 
-### Live scraping i browser checkout
+### Live scraping and browser checkout
 
-Odrzucone jako kruche, nieprzewidywalne i odciągające uwagę od jakości decyzji.
+Rejected as brittle, unpredictable, and distracting from decision quality.
 
-### Mikroserwisy i multi-agent runtime
+### Microservices and a multi-agent runtime
 
-Odrzucone jako koszt operacyjny bez proporcjonalnej wartości dla jednego pionowego flow.
+Rejected as an operational cost without proportional value for a single vertical flow.

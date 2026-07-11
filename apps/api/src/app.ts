@@ -10,6 +10,7 @@ import {
   ScrapeOffersResponseSchema,
   type CompileMandateResponse,
   type Decision,
+  type ListReceiptsResponse,
   type Mandate,
   type Run,
   type RunEvent,
@@ -77,7 +78,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
       return reply.status(400).send({
         error: {
           code: "INVALID_REQUEST",
-          message: "Żądanie nie spełnia kontraktu.",
+          message: "The request does not match the contract.",
           fieldErrors: error.issues.map((issue) => ({ field: issue.path.join("."), code: issue.code })),
         },
       });
@@ -88,7 +89,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
       });
     }
     app.log.error(error);
-    return reply.status(500).send({ error: { code: "INTERNAL_ERROR", message: "Wewnętrzny błąd serwera." } });
+    return reply.status(500).send({ error: { code: "INTERNAL_ERROR", message: "Internal server error." } });
   });
 
   app.get("/health", async () => ({
@@ -169,6 +170,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
       destinationCountry: input.destinationCountry.toUpperCase(),
       product: draft.product,
       maxTotal: draft.maxTotal,
+      purchaseBy: draft.purchaseBy,
       sellerPolicy: draft.sellerPolicy,
       autonomy: draft.autonomy,
     });
@@ -180,7 +182,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
           compiler: options.compiler.kind,
           error: {
             code: "AMBIGUOUS_MANDATE",
-            message: "Uzupełnij brakujące warunki planu zakupu.",
+            message: "Provide the missing mandate constraints.",
             fieldErrors: draft.ambiguities.map(({ field, code }) => ({ field, code })),
           },
         }
@@ -195,10 +197,10 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     if (cached) return cached;
     const mandate = getMandate(store, request.params.mandateId);
     if (mandate.version !== input.expectedVersion) {
-      throw new ApiError(409, "VERSION_CONFLICT", "Plan zakupu ma nowszą wersję.");
+      throw new ApiError(409, "VERSION_CONFLICT", "The mandate has a newer version.");
     }
     if (!mandate.product.condition || !mandate.maxTotal) {
-      throw new ApiError(422, "AMBIGUOUS_MANDATE", "Plan zakupu nadal zawiera braki.");
+      throw new ApiError(422, "AMBIGUOUS_MANDATE", "The mandate still has missing constraints.");
     }
     const approved = MandateSchema.parse({ ...mandate, status: "APPROVED" });
     store.mandates.set(approved.id, approved);
@@ -214,7 +216,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     if (cached) return cached;
     const mandate = getMandate(store, request.params.mandateId);
     if (mandate.version !== input.expectedVersion) {
-      throw new ApiError(409, "VERSION_CONFLICT", "Plan zakupu ma nowszą wersję.");
+      throw new ApiError(409, "VERSION_CONFLICT", "The mandate has a newer version.");
     }
     const revoked = MandateSchema.parse({ ...mandate, version: mandate.version + 1, status: "REVOKED" });
     store.mandates.set(revoked.id, revoked);
@@ -229,15 +231,15 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     const cached = store.idempotency.get(cacheKey);
     if (cached) return reply.status(200).send(cached);
     const mandate = getMandate(store, input.mandateId);
-    if (mandate.status !== "APPROVED") throw new ApiError(409, "MANDATE_NOT_APPROVED", "Najpierw zatwierdź plan zakupu.");
+    if (mandate.status !== "APPROVED") throw new ApiError(409, "MANDATE_NOT_APPROVED", "Approve the mandate first.");
 
     let scenario;
     try {
       scenario = loadScenario(input.scenarioId);
     } catch {
-      throw new ApiError(404, "SCENARIO_NOT_FOUND", "Nie znaleziono scenariusza demo.");
+      throw new ApiError(404, "SCENARIO_NOT_FOUND", "Demo scenario not found.");
     }
-    if (scenario.seed !== input.seed) throw new ApiError(422, "SEED_MISMATCH", "Scenariusz wymaga ustalonego seeda.");
+    if (scenario.seed !== input.seed) throw new ApiError(422, "SEED_MISMATCH", "The scenario requires the pinned seed.");
 
     const runId = store.nextId("run");
     const offers = personalizeDemoOffers(structuredClone(scenario.offers), mandate);
@@ -286,7 +288,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     const run = getRun(store, request.params.runId);
     const index = run.offers.findIndex((offer) => offer.id === input.offerId);
     const current = run.offers[index];
-    if (!current || index < 0) throw new ApiError(404, "OFFER_NOT_FOUND", "Nie znaleziono oferty w tym runie.");
+    if (!current || index < 0) throw new ApiError(404, "OFFER_NOT_FOUND", "Offer not found in this run.");
     const updated = { ...current, version: current.version + 1, price: { ...current.price, amountMinor: input.amountMinor } };
     run.offers[index] = updated;
     const sequence = (run.events.at(-1)?.sequence ?? 0) + 1;
@@ -307,7 +309,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     if (cached) return { ...(cached as object), idempotentReplay: true };
     const { run, decision } = findDecision(store, request.params.decisionId);
     if (decision.mandateVersion !== input.mandateVersion || decision.offerVersion !== input.offerVersion) {
-      throw new ApiError(409, "VERSION_CONFLICT", "Checkout odwołuje się do innej wersji decyzji.");
+      throw new ApiError(409, "VERSION_CONFLICT", "Checkout references a different decision version.");
     }
     const mandate = getMandate(store, decision.mandateId);
     try {
@@ -330,9 +332,15 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     return response;
   });
 
+  app.get("/api/receipts", async (): Promise<ListReceiptsResponse> => ({
+    receipts: [...store.receipts.values()].sort(
+      (a, b) => b.completedAt.localeCompare(a.completedAt) || b.id.localeCompare(a.id),
+    ),
+  }));
+
   app.get<{ Params: { receiptId: string } }>("/api/receipts/:receiptId", async (request) => {
     const receipt = store.receipts.get(request.params.receiptId);
-    if (!receipt) throw new ApiError(404, "RECEIPT_NOT_FOUND", "Nie znaleziono trust receipt.");
+    if (!receipt) throw new ApiError(404, "RECEIPT_NOT_FOUND", "Trust receipt not found.");
     return receipt;
   });
 
@@ -406,13 +414,13 @@ function personalizeDemoOffers(offers: ReturnType<typeof loadScenario>["offers"]
 
 function getMandate(store: InMemoryStore, id: string): Mandate {
   const mandate = store.mandates.get(id);
-  if (!mandate) throw new ApiError(404, "MANDATE_NOT_FOUND", "Nie znaleziono planu zakupu.");
+  if (!mandate) throw new ApiError(404, "MANDATE_NOT_FOUND", "Mandate not found.");
   return mandate;
 }
 
 function getRun(store: InMemoryStore, id: string): Run {
   const run = store.runs.get(id);
-  if (!run) throw new ApiError(404, "RUN_NOT_FOUND", "Nie znaleziono runu.");
+  if (!run) throw new ApiError(404, "RUN_NOT_FOUND", "Run not found.");
   return run;
 }
 
@@ -421,7 +429,7 @@ function findDecision(store: InMemoryStore, decisionId: string): { run: Run; dec
     const decision = run.decisions.find((candidate) => candidate.id === decisionId);
     if (decision) return { run, decision };
   }
-  throw new ApiError(404, "DECISION_NOT_FOUND", "Nie znaleziono decyzji.");
+  throw new ApiError(404, "DECISION_NOT_FOUND", "Decision not found.");
 }
 
 function isClientHttpError(error: unknown): error is Error & { statusCode: number } {
