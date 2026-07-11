@@ -116,12 +116,33 @@ dd { margin: 0; text-align: right; font-size: 11px; font-weight: 700; overflow-w
 .metric-grid div { display: grid; gap: 4px; padding: 12px; background: var(--panel); }
 .metric-grid strong { font: 700 22px Georgia, serif; }
 .metric-grid span { color: var(--muted); font-size: 9px; text-transform: uppercase; letter-spacing: .05em; }
+.scraper-panel { margin-top: 20px; border: 1px solid var(--line); background: rgba(248,250,249,.96); box-shadow: var(--shadow); }
+.scraper-heading { align-items: center; }
+.scraper-layout { display: grid; grid-template-columns: minmax(300px, 390px) minmax(0, 1fr); }
+.scraper-form { padding: 20px; border-right: 1px solid var(--line); }
+.scraper-form textarea { min-height: 132px; font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.scraper-form .primary { width: 100%; margin-top: 12px; }
+.scraper-results { min-height: 240px; padding: 20px; }
+.offer-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
+.offer-card { min-width: 0; overflow: hidden; border: 1px solid var(--line); background: var(--panel); }
+.offer-card > img, .offer-image-placeholder { width: 100%; height: 150px; object-fit: contain; background: #f1f4f3; }
+.offer-image-placeholder { display: grid; place-content: center; color: var(--muted); font-size: 11px; }
+.offer-card-body { display: grid; gap: 9px; padding: 13px; }
+.offer-card-body h3 { min-height: 38px; margin: 0; font-size: 14px; line-height: 1.35; }
+.offer-store { margin: 0; overflow: hidden; color: var(--berry); font: 800 9px ui-monospace, monospace; text-overflow: ellipsis; white-space: nowrap; text-transform: uppercase; }
+.offer-price { font: 700 22px Georgia, serif; }
+.offer-card-body dl div { display: flex; justify-content: space-between; gap: 10px; padding: 4px 0; border-top: 1px solid #edf0ef; }
+.offer-card-body a { color: var(--berry); font-size: 11px; font-weight: 800; }
+.scrape-error { display: grid; gap: 4px; margin-bottom: 10px; padding: 10px; border-left: 3px solid var(--danger); background: var(--danger-pale); color: var(--danger); font-size: 11px; }
+.scrape-error small { overflow-wrap: anywhere; color: var(--muted); }
 
 @media (max-width: 940px) {
   .shell { padding: 22px; }
   .topbar { display: grid; align-items: start; }
   .connection { min-width: 0; }
   .workspace { grid-template-columns: 1fr; }
+  .scraper-layout { grid-template-columns: 1fr; }
+  .scraper-form { border-right: 0; border-bottom: 1px solid var(--line); }
 }
 
 @media (max-width: 620px) {

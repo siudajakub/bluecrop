@@ -3,6 +3,7 @@ import type { FastifyInstance } from "fastify";
 import { buildApp } from "../apps/api/src/app.js";
 import { loadConfig } from "../apps/api/src/config.js";
 import { FixtureMandateCompiler } from "../apps/api/src/services/mandate-compiler.js";
+import type { OfferScraper } from "../apps/api/src/services/offer-scraper.js";
 
 const brief = "Nike Dunk Low, rozmiar 43, nowe, bez resellerów, maksymalnie 80 EUR z dostawą, kup automatycznie przy niskim stanie";
 
@@ -26,6 +27,54 @@ describe("Deal Hunter API", () => {
     expect(response.statusCode).toBe(422);
     expect(response.json().error.code).toBe("AMBIGUOUS_MANDATE");
     expect(response.json().ambiguities.map((item: { field: string }) => item.field)).toEqual(["product.size", "maxTotal"]);
+  });
+
+  it("keeps live offer scraping disabled unless explicitly configured", async () => {
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/offers/scrape",
+      payload: { urls: ["https://shop.example/products"] },
+    });
+    expect(response.statusCode).toBe(503);
+    expect(response.json().error.code).toBe("OFFER_SCRAPER_DISABLED");
+  });
+
+  it("returns validated offers and per-page errors from the scraper adapter", async () => {
+    await app.close();
+    const scraper: OfferScraper = {
+      async scrape(url) {
+        if (url.includes("broken")) throw new Error("Shop returned HTTP 403");
+        return [{
+          id: "scraped-1",
+          productId: "yamaha-f310",
+          merchantId: "merchant-example-shop",
+          category: "guitars",
+          productName: "Yamaha F310",
+          store: "Example Shop",
+          shippingFrom: "Poland",
+          price: { amountMinor: 89900, currency: "PLN" },
+          deliveryPrice: { amountMinor: 0, currency: "PLN" },
+          stock: 3,
+          deliveryDays: 2,
+          couponCode: null,
+          riskScore: null,
+          url: "https://shop.example/yamaha-f310",
+          imageUrl: "https://shop.example/images/yamaha-f310.jpg",
+          scrapedAt: "2026-07-11T12:00:00.000Z",
+        }];
+      },
+    };
+    app = await buildApp({ config: loadConfig({}), compiler: new FixtureMandateCompiler(), offerScraper: scraper });
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/offers/scrape",
+      payload: { urls: ["https://shop.example/products", "https://broken.example/products"] },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      offers: [{ productName: "Yamaha F310", price: { amountMinor: 89900, currency: "PLN" } }],
+      errors: [{ url: "https://broken.example/products", code: "SCRAPE_FAILED" }],
+    });
   });
 
   it("executes the golden path and makes checkout idempotent", async () => {

@@ -8,6 +8,7 @@ import type {
   Money,
   Receipt,
   RunEvent,
+  ScrapedOffer,
 } from "@deal-hunter/contracts";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -22,6 +23,7 @@ import {
   pollEvents,
   resetDemo,
   revokeMandate,
+  scrapeOffers,
   startRun,
   type EvalSummary,
 } from "@/lib/api";
@@ -29,7 +31,7 @@ import {
 const DEFAULT_BRIEF =
   "Nike Dunk Low, rozmiar 43, nowe, bez resellerów, maksymalnie 80 EUR z dostawą, kup automatycznie przy niskim stanie magazynowym";
 
-type BusyAction = "compile" | "approve" | "run" | "mutate" | "checkout" | "revoke" | "reset" | null;
+type BusyAction = "compile" | "approve" | "run" | "mutate" | "checkout" | "revoke" | "reset" | "scrape" | null;
 
 export function DealHunterConsole() {
   const [brief, setBrief] = useState(DEFAULT_BRIEF);
@@ -41,6 +43,9 @@ export function DealHunterConsole() {
   const [busy, setBusy] = useState<BusyAction>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [mutationApplied, setMutationApplied] = useState(false);
+  const [shopUrls, setShopUrls] = useState("https://www.morele.net/wyszukiwarka/?q=laptop");
+  const [scrapedOffers, setScrapedOffers] = useState<ScrapedOffer[]>([]);
+  const [scrapeErrors, setScrapeErrors] = useState<Array<{ url: string; code: string; message: string }>>([]);
   const checkoutKey = useRef<string | null>(null);
   const cursor = useRef("0");
 
@@ -204,6 +209,24 @@ export function DealHunterConsole() {
     }
   }
 
+  async function handleScrape(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const urls = shopUrls.split(/\r?\n/).map((url) => url.trim()).filter(Boolean);
+    setBusy("scrape");
+    setMessage(null);
+    setScrapeErrors([]);
+    try {
+      const response = await scrapeOffers(urls);
+      setScrapedOffers(response.offers);
+      setScrapeErrors(response.errors);
+      setMessage(`Pobrano ${response.offers.length} ofert z ${urls.length} stron.`);
+    } catch (error) {
+      setMessage(toMessage(error));
+    } finally {
+      setBusy(null);
+    }
+  }
+
   return (
     <main className="shell">
       <header className="topbar">
@@ -288,7 +311,61 @@ export function DealHunterConsole() {
           </div>
         </section>
       </div>
+
+      <section className="scraper-panel" aria-label="Pobieranie ofert ze sklepów">
+        <div className="section-heading scraper-heading">
+          <div><p className="eyebrow">OpenAI live extraction</p><h2>Oferty ze sklepów internetowych</h2></div>
+          <span className="event-count">{scrapedOffers.length} ofert</span>
+        </div>
+        <div className="scraper-layout">
+          <form className="scraper-form" onSubmit={handleScrape}>
+            <label htmlFor="shop-urls">Adresy stron sklepów — jeden URL w wierszu, maksymalnie 5</label>
+            <textarea
+              id="shop-urls"
+              value={shopUrls}
+              onChange={(event) => setShopUrls(event.target.value)}
+              rows={5}
+              spellCheck={false}
+            />
+            <p className="supporting">Dozwolone hosty są kontrolowane przez backend. OpenAI ekstrahuje wyłącznie pola widoczne na stronie.</p>
+            <button className="primary" type="submit" disabled={busy !== null || !shopUrls.trim()}>
+              {busy === "scrape" ? "Pobieram i analizuję…" : "Pobierz oferty przez OpenAI"}
+            </button>
+          </form>
+          <div className="scraper-results" aria-live="polite">
+            {scrapeErrors.map((error) => (
+              <div className="scrape-error" key={`${error.url}-${error.code}`}>
+                <strong>{error.code}</strong><span>{error.message}</span><small>{error.url}</small>
+              </div>
+            ))}
+            {scrapedOffers.length ? (
+              <div className="offer-grid">
+                {scrapedOffers.map((offer) => <ScrapedOfferCard offer={offer} key={offer.id} />)}
+              </div>
+            ) : !scrapeErrors.length ? <EmptyCopy>Wprowadź URL sklepu i uruchom ekstrakcję.</EmptyCopy> : null}
+          </div>
+        </div>
+      </section>
     </main>
+  );
+}
+
+function ScrapedOfferCard({ offer }: { offer: ScrapedOffer }) {
+  return (
+    <article className="offer-card">
+      {offer.imageUrl ? <img src={offer.imageUrl} alt="" loading="lazy" /> : <div className="offer-image-placeholder">brak zdjęcia</div>}
+      <div className="offer-card-body">
+        <p className="offer-store">{offer.store}{offer.category ? ` · ${offer.category}` : ""}</p>
+        <h3>{offer.productName}</h3>
+        <strong className="offer-price">{formatMoney(offer.price)}</strong>
+        <dl>
+          <div><dt>Dostawa</dt><dd>{offer.deliveryPrice ? formatMoney(offer.deliveryPrice) : "brak danych"}</dd></div>
+          <div><dt>Stan</dt><dd>{offer.stock ?? "brak danych"}</dd></div>
+          <div><dt>Wysyłka z</dt><dd>{offer.shippingFrom ?? "brak danych"}</dd></div>
+        </dl>
+        <a href={offer.url} target="_blank" rel="noreferrer">Otwórz ofertę</a>
+      </div>
+    </article>
   );
 }
 

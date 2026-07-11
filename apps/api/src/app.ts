@@ -4,6 +4,8 @@ import { z } from "zod";
 import {
   CompileMandateRequestSchema,
   MandateSchema,
+  ScrapeOffersRequestSchema,
+  ScrapeOffersResponseSchema,
   type CompileMandateResponse,
   type Decision,
   type Mandate,
@@ -16,6 +18,7 @@ import type { AppConfig } from "./config.js";
 import { ApiError } from "./errors.js";
 import { loadScenario } from "./scenarios.js";
 import type { MandateCompiler } from "./services/mandate-compiler.js";
+import type { OfferScraper } from "./services/offer-scraper.js";
 import { InMemoryStore } from "./store.js";
 
 const IdempotencySchema = z.object({ idempotencyKey: z.string().min(4) });
@@ -41,6 +44,7 @@ export type BuildAppOptions = {
   compiler: MandateCompiler;
   store?: InMemoryStore;
   logger?: boolean;
+  offerScraper?: OfferScraper;
 };
 
 export async function buildApp(options: BuildAppOptions): Promise<FastifyInstance> {
@@ -77,8 +81,26 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   app.get("/health", async () => ({
     status: "ok",
     compiler: options.compiler.kind,
+    offerScraper: options.offerScraper ? "openai" : "disabled",
     now: new Date().toISOString(),
   }));
+
+  app.post("/api/offers/scrape", async (request) => {
+    if (!options.offerScraper) {
+      throw new ApiError(503, "OFFER_SCRAPER_DISABLED", "Scraper ofert nie jest skonfigurowany.");
+    }
+    const input = ScrapeOffersRequestSchema.parse(request.body);
+    const offers = [];
+    const errors: Array<{ url: string; code: string; message: string }> = [];
+    for (const url of input.urls) {
+      try {
+        offers.push(...await options.offerScraper.scrape(url));
+      } catch (error) {
+        errors.push({ url, code: "SCRAPE_FAILED", message: error instanceof Error ? error.message : "Nieznany błąd scrapera." });
+      }
+    }
+    return ScrapeOffersResponseSchema.parse({ offers, errors });
+  });
 
   app.post("/api/mandates/compile", async (request, reply) => {
     const input = CompileMandateRequestSchema.parse(request.body);
