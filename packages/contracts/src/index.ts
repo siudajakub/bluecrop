@@ -55,6 +55,86 @@ export const CompileMandateResponseSchema = z.object({
 });
 export type CompileMandateResponse = z.infer<typeof CompileMandateResponseSchema>;
 
+export const InterviewMessageSchema = z.object({
+  role: z.enum(["user", "assistant"]),
+  content: z.string().min(1),
+});
+export type InterviewMessage = z.infer<typeof InterviewMessageSchema>;
+
+export const InterviewRequestSchema = z.object({
+  messages: z.array(InterviewMessageSchema).min(1).max(40),
+  baseCurrency: CurrencySchema.default("EUR"),
+  destinationCountry: z.string().length(2).default("PL"),
+});
+export type InterviewRequest = z.infer<typeof InterviewRequestSchema>;
+
+export const ProductParameterSchema = z.object({
+  name: z.string().min(1),
+  value: z.string().min(1),
+  priority: z.enum(["REQUIRED", "PREFERRED"]),
+});
+export type ProductParameter = z.infer<typeof ProductParameterSchema>;
+
+export const SearchCategorySchema = z.object({
+  name: z.string().min(1),
+  purpose: z.string().min(1),
+  required: z.boolean(),
+  query: z.string().min(1),
+});
+export type SearchCategory = z.infer<typeof SearchCategorySchema>;
+
+export const PurchasePlanSchema = z.object({
+  goal: z.string().min(1),
+  summary: z.string().min(8),
+  parameters: z.array(ProductParameterSchema),
+  categories: z.array(SearchCategorySchema).min(1),
+});
+export type PurchasePlan = z.infer<typeof PurchasePlanSchema>;
+
+export const InterviewResponseSchema = z.object({
+  assistantMessage: z.string().min(1),
+  status: z.enum(["QUESTION", "READY"]),
+  options: z.array(z.object({ label: z.string().min(1), value: z.string().min(1) })).max(5),
+  questionNumber: z.number().int().min(0),
+  maxQuestions: z.number().int().positive(),
+  brief: z.string().min(8).nullable(),
+  plan: PurchasePlanSchema.nullable(),
+  interviewer: z.enum(["openai", "fixture"]),
+});
+export type InterviewResponse = z.infer<typeof InterviewResponseSchema>;
+
+export const RealtimeTokenResponseSchema = z.object({
+  value: z.string().min(1),
+  expiresAt: z.number().optional(),
+  model: z.string().min(1),
+});
+export type RealtimeTokenResponse = z.infer<typeof RealtimeTokenResponseSchema>;
+
+export const ProductRecommendationSchema = z.object({
+  name: z.string().min(1),
+  category: z.string().min(1),
+  price: z.string().min(1),
+  seller: z.string().min(1),
+  url: z.string().regex(/^https?:\/\//),
+  imageUrl: z.string().regex(/^https?:\/\//).nullable(),
+  whyItFits: z.string().min(1),
+  tradeoffs: z.array(z.string()),
+});
+export type ProductRecommendation = z.infer<typeof ProductRecommendationSchema>;
+
+export const ProductSearchRequestSchema = z.object({
+  plan: PurchasePlanSchema,
+  destinationCountry: z.string().length(2).default("PL"),
+});
+export type ProductSearchRequest = z.infer<typeof ProductSearchRequestSchema>;
+
+export const ProductSearchResponseSchema = z.object({
+  recommendations: z.array(ProductRecommendationSchema).min(1).max(8),
+  searchedCategories: z.array(z.string()).min(1),
+  searcher: z.enum(["openai", "fixture"]),
+});
+export type ProductSearchResponse = z.infer<typeof ProductSearchResponseSchema>;
+
 export const SellerSchema = z.object({
   id: z.string(),
   name: z.string(),

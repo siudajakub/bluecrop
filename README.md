@@ -1,6 +1,6 @@
 # Bluecrop — Deal Hunter
 
-Deal Hunter to demonstracyjny agent zakupowy, który kompiluje brief do jawnego mandatu, ocenia
+Deal Hunter to demonstracyjny agent zakupowy, który prowadzi wywiad, tworzy jawny plan zakupu, wyszukuje produkty, ocenia
 zmieniające się oferty i wykonuje testowy zakup wyłącznie w granicach zatwierdzonej zgody.
 
 Repo zawiera lokalny pion hackathonowy z testowym UI Next.js i API Fastify. Sprzedawcy i płatność
@@ -26,17 +26,18 @@ Sprawdzenie gotowości API:
 curl http://127.0.0.1:3001/health
 ```
 
-Domyślnie działa `MANDATE_COMPILER_MODE=fixture`, więc klucz OpenAI nie jest potrzebny.
+Bez klucza dostępny jest tryb `fixture`. Po ustawieniu `OPENAI_API_KEY` aplikacja domyślnie używa prawdziwego modelu AI.
 
 ## Testowe UI
 
 Pojedynczy ekran prowadzi przez cały przepływ:
 
-1. skompiluj brief;
-2. zatwierdź mandat;
-3. uruchom monitoring;
-4. wykonaj poprawny checkout albo najpierw podnieś cenę;
-5. sprawdź timeline, trust receipt i safety counters.
+1. przejdź adaptacyjny wywiad tekstowy albo głosowy;
+2. sprawdź podsumowanie i skompiluj brief;
+3. zatwierdź plan zakupu;
+4. uruchom monitoring;
+5. wykonaj poprawny checkout albo najpierw podnieś cenę;
+6. sprawdź timeline, trust receipt i safety counters.
 
 Przycisk „Cofnij zgodę” pozwala sprawdzić drugą blokadę rewalidacji. „Reset demo” czyści stan
 backendu i interfejsu.
@@ -56,7 +57,7 @@ IGNORE → IGNORE → AUTO_BUY
 ```
 
 Pierwsza oferta przekracza limit po FX, dostawie i opłatach. Druga ma fałszywy rabat. Trzecia
-spełnia mandat, mieści się w 80 EUR i ma niski stan magazynowy.
+spełnia plan zakupu, mieści się w 80 EUR i ma niski stan magazynowy.
 
 Stan działającego serwera resetuje:
 
@@ -71,11 +72,25 @@ Klucz pozostaje wyłącznie w backendzie. Nie dodawaj `.env` do repozytorium.
 ```bash
 MANDATE_COMPILER_MODE=openai
 OPENAI_API_KEY=...
-OPENAI_MODEL=gpt-5.6
+OPENAI_MODEL=gpt-5.6-luna
+OPENAI_REALTIME_MODEL=gpt-realtime-2.1
+OFFER_ENRICHMENT_MODE=html
 ```
 
 Adapter używa Responses API i Structured Outputs z tym samym schematem Zod, który waliduje
-kontrakt aplikacji. Model interpretuje brief, ale nie liczy kosztu ani nie autoryzuje zakupu.
+kontrakt aplikacji. Model prowadzi wywiad, generuje parametry i kategorie wyszukiwania, a następnie
+używa narzędzia `web_search` do znalezienia aktualnych propozycji z klikalnymi źródłami. Nie liczy
+deterministycznych granic bezpieczeństwa ani nie autoryzuje zakupu.
+Jeżeli wynik wyszukiwania nie zawiera dopasowanego obrazu, backend pobiera ograniczony fragment
+bezpośredniej strony oferty i odczytuje `og:image` lub `twitter:image`. Pobieranie sprawdza HTTPS,
+przekierowania, publiczny adres DNS, typ odpowiedzi i limit bajtów; jego awaria nie przerywa całego
+wyszukiwania. `OFFER_ENRICHMENT_ALLOWED_HOSTS` może opcjonalnie ograniczyć ten fallback do listy
+hostów rozdzielonych przecinkami, a `OFFER_ENRICHMENT_MODE=disabled` wyłącza go całkowicie.
+Każde pytanie zawiera gotowe opcje odpowiedzi, a wywiad ma twardy limit czterech rund. Po
+osiągnięciu limitu model musi utworzyć najlepszy możliwy plan i rozpocząć wyszukiwanie.
+Rozmowa głosowa używa WebRTC i krótkotrwałego sekretu sesji wydawanego przez backend. Standardowy
+`OPENAI_API_KEY` nigdy nie jest zwracany do przeglądarki. Mikrofon wymaga zgody użytkownika i jest
+zatrzymywany po zakończeniu rozmowy, resecie połączenia albo opuszczeniu widoku.
 
 ## Komendy
 
@@ -91,9 +106,11 @@ npm run demo:smoke  # pełny lokalny golden path
 
 ```text
 Next.js UI
-    ↓ HTTP polling
+    ↓ HTTP + WebRTC
 Fastify API
-    ├── fixture/OpenAI mandate compiler
+    ├── adaptive text/voice interview
+    ├── fixture/OpenAI purchase-plan compiler
+    ├── OpenAI web search + product recommendations
     ├── deterministic replay + policy engine
     ├── revalidation + idempotent checkout
     └── in-memory audit receipts

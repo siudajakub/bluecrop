@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
+import type { Decision } from "../packages/contracts/src/index.js";
 import { buildApp } from "../apps/api/src/app.js";
 import { loadConfig } from "../apps/api/src/config.js";
 import { FixtureMandateCompiler } from "../apps/api/src/services/mandate-compiler.js";
@@ -26,6 +27,61 @@ describe("Deal Hunter API", () => {
     expect(response.statusCode).toBe(422);
     expect(response.json().error.code).toBe("AMBIGUOUS_MANDATE");
     expect(response.json().ambiguities.map((item: { field: string }) => item.field)).toEqual(["product.size", "maxTotal"]);
+  });
+
+  it("conducts an interview before compiling a broad purchase goal", async () => {
+    const first = await app.inject({
+      method: "POST",
+      url: "/api/interviews/respond",
+      payload: { messages: [{ role: "user", content: "Chcę nauczyć się grać na gitarze" }] },
+    });
+    expect(first.statusCode).toBe(200);
+    expect(first.json()).toMatchObject({ status: "QUESTION", interviewer: "fixture", brief: null });
+    expect(first.json().assistantMessage).toContain("budżet");
+    expect(first.json().options.length).toBeGreaterThanOrEqual(2);
+    expect(first.json()).toMatchObject({ questionNumber: 1, maxQuestions: 4 });
+
+    const ready = await app.inject({
+      method: "POST",
+      url: "/api/interviews/respond",
+      payload: { messages: [
+        { role: "user", content: "Chcę nauczyć się grać na gitarze" },
+        { role: "assistant", content: first.json().assistantMessage },
+        { role: "user", content: "Do 1500 PLN z dostawą, nowa, chcę kupić w tym miesiącu" },
+      ] },
+    });
+    expect(ready.statusCode).toBe(200);
+    expect(ready.json().status).toBe("READY");
+    expect(ready.json().brief).toContain("gitarze");
+    expect(ready.json().plan.categories).toHaveLength(1);
+
+    const search = await app.inject({
+      method: "POST",
+      url: "/api/products/search",
+      payload: { plan: ready.json().plan, destinationCountry: "PL" },
+    });
+    expect(search.statusCode).toBe(200);
+    expect(search.json()).toMatchObject({ searcher: "fixture", searchedCategories: ["Produkt główny"] });
+    expect(search.json().recommendations).toHaveLength(1);
+    expect(search.json().recommendations[0].imageUrl).toBeNull();
+  });
+
+  it("forces a plan after the hard interview question limit", async () => {
+    const messages = [{ role: "user", content: "Szukam produktu do nowego hobby" }];
+    for (let index = 0; index < 4; index += 1) {
+      messages.push({ role: "assistant", content: `Pytanie ${index + 1}` });
+      messages.push({ role: "user", content: `Odpowiedź ${index + 1}` });
+    }
+    const response = await app.inject({ method: "POST", url: "/api/interviews/respond", payload: { messages } });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ status: "READY", options: [], maxQuestions: 4 });
+    expect(response.json().plan).not.toBeNull();
+  });
+
+  it("keeps the realtime API key server-side and reports missing configuration", async () => {
+    const response = await app.inject({ method: "POST", url: "/api/realtime/token" });
+    expect(response.statusCode).toBe(503);
+    expect(response.json().error.code).toBe("VOICE_NOT_CONFIGURED");
   });
 
   it("executes the golden path and makes checkout idempotent", async () => {
@@ -59,6 +115,44 @@ describe("Deal Hunter API", () => {
       duplicateBuys: 0,
       falseBuyRate: 0,
     });
+  });
+
+  it("shows a checkout candidate for a user-approved custom product", async () => {
+    const compiled = await app.inject({
+      method: "POST",
+      url: "/api/mandates/compile",
+      payload: {
+        brief: "Używany zestaw gitarowy, maksymalnie 2500 PLN z dostawą, zapytaj przed zakupem",
+        baseCurrency: "PLN",
+        destinationCountry: "PL",
+      },
+    });
+    expect(compiled.statusCode).toBe(200);
+    const mandate = compiled.json().mandate;
+    await app.inject({
+      method: "POST",
+      url: `/api/mandates/${mandate.id}/approve`,
+      payload: { expectedVersion: 1, idempotencyKey: "approve-guitar" },
+    });
+    const started = await app.inject({
+      method: "POST",
+      url: "/api/runs",
+      payload: { mandateId: mandate.id, scenarioId: "golden-path", seed: 20260711, idempotencyKey: "run-guitar" },
+    });
+    const polled = await app.inject({ method: "GET", url: `/api/runs/${started.json().runId}/events?after=0` });
+    const candidate = polled.json().events
+      .filter((event: { type: string }) => event.type === "DECISION_MADE")
+      .map((event: { data: Decision }) => event.data)
+      .find((decision: Decision) => decision.action === "ASK_USER");
+    expect(candidate).toBeDefined();
+    expect(candidate.cost.total).toEqual({ amountMinor: 175000, currency: "PLN" });
+
+    const checkout = await app.inject({
+      method: "POST",
+      url: `/api/decisions/${candidate.id}/checkout`,
+      payload: { mandateVersion: 1, offerVersion: 1, idempotencyKey: "checkout-guitar" },
+    });
+    expect(checkout.statusCode).toBe(200);
   });
 
   it("blocks checkout when the price changes after the decision", async () => {

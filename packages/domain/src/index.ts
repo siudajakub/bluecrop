@@ -36,7 +36,7 @@ function isExactVariant(offer: CanonicalOffer, mandate: Mandate): boolean {
   const productName = `${offer.product.brand} ${offer.product.model}`.toLocaleLowerCase();
   return (
     productName.includes(query) &&
-    offer.product.size.toLocaleLowerCase() === mandate.product.size?.toLocaleLowerCase() &&
+    (!mandate.product.size || offer.product.size.toLocaleLowerCase() === mandate.product.size.toLocaleLowerCase()) &&
     offer.product.condition === mandate.product.condition
   );
 }
