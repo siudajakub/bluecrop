@@ -1,6 +1,30 @@
 "use client";
 import React, { useState, useRef, useEffect } from 'react';
 import '../app/globals.css';
+import type {
+  CanonicalOffer,
+  CompileMandateResponse,
+  Currency,
+  Decision,
+  Mandate,
+  Money,
+  Receipt,
+  RunEvent,
+} from '@deal-hunter/contracts';
+import {
+  ApiClientError,
+  approveMandate,
+  checkoutDecision,
+  compileMandate,
+  getEvalSummary,
+  getReceipt,
+  mutateWinner,
+  pollEvents,
+  resetDemo,
+  revokeMandate,
+  startRun,
+  type EvalSummary,
+} from '@/lib/api';
 import { ChevronUpIcon, type ChevronUpIconHandle } from './chevron-up-icon';
 import { CirclePlusIcon, type CirclePlusIconHandle } from './circle-plus-icon';
 import { Trash2Icon } from './trash2-icon';
@@ -8,22 +32,36 @@ import { AudioLinesIcon, type AudioLinesIconHandle } from './audio-lines-icon';
 import BlurText from './blur-text';
 import MetaBalls from './meta-balls';
 import { motion, AnimatePresence } from 'motion/react';
-
-interface Message {
-  text: string;
-  sender: 'user' | 'bot';
-}
+import {
+  DecisionCard,
+  ErrorNote,
+  MandateCard,
+  OfferLine,
+  ReceiptCard,
+  formatMoney,
+  type ChatMessage,
+} from './chat-cards';
 
 interface ShoppingContext {
-  budget?: string;
-  timing?: string;
+  budget?: { amount: number; currency: Currency; label: string };
+  timing?: { label: string; briefHint: string };
 }
+
+type BusyAction = 'compile' | 'approve' | 'run' | 'mutate' | 'checkout' | 'revoke' | null;
 
 interface Chat {
   id: string;
   title: string;
-  messages: Message[];
+  messages: ChatMessage[];
   context: ShoppingContext;
+  pendingBrief: string | null;
+  ambiguities: CompileMandateResponse['ambiguities'];
+  mandate: Mandate | null;
+  runId: string | null;
+  checkoutKey: string | null;
+  purchasedDecisionIds: string[];
+  mutatedOfferIds: string[];
+  busy: BusyAction;
 }
 
 function dateAfterDays(days: number) {
@@ -33,11 +71,42 @@ function dateAfterDays(days: number) {
   return date.toISOString().slice(0, 10);
 }
 
+function uid() {
+  return crypto.randomUUID();
+}
+
+function botText(text: string): ChatMessage {
+  return { id: uid(), sender: 'bot', kind: 'text', text };
+}
+
+function botError(error: unknown): ChatMessage {
+  if (error instanceof ApiClientError) {
+    return { id: uid(), sender: 'bot', kind: 'error', code: error.code, text: error.message, reasonCodes: error.reasonCodes };
+  }
+  const text = error instanceof Error ? error.message : 'Unknown error.';
+  return { id: uid(), sender: 'bot', kind: 'error', code: 'UNEXPECTED_ERROR', text, reasonCodes: [] };
+}
+
+function withContextHints(brief: string, context: ShoppingContext) {
+  const hints: string[] = [];
+  if (context.budget) hints.push(`maximum ${context.budget.amount} ${context.budget.currency}`);
+  if (context.timing) hints.push(context.timing.briefHint);
+  return hints.length ? `${brief}, ${hints.join(', ')}` : brief;
+}
+
+function sleep(ms: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
 export function DealHunterConsole() {
   const [chats, setChats] = useState<Chat[]>([]);
   const [currentChatId, setCurrentChatId] = useState<string | null>(null);
   const [draftContext, setDraftContext] = useState<ShoppingContext>({});
-  
+  const [purchases, setPurchases] = useState<Receipt[]>([]);
+  const [metrics, setMetrics] = useState<EvalSummary | null>(null);
+  const [purchasesNotice, setPurchasesNotice] = useState<string | null>(null);
+  const [isResetting, setIsResetting] = useState(false);
+
   const [inputValue, setInputValue] = useState("");
   const [isRecording, setIsRecording] = useState(false);
   const [isSending, setIsSending] = useState(false);
@@ -45,7 +114,7 @@ export function DealHunterConsole() {
   const [isPlusPopoverOpen, setIsPlusPopoverOpen] = useState(false);
   const [plusPopoverView, setPlusPopoverView] = useState<'menu' | 'budget' | 'time'>('menu');
   const [budgetAmount, setBudgetAmount] = useState('');
-  const [budgetCurrency, setBudgetCurrency] = useState('EUR');
+  const [budgetCurrency, setBudgetCurrency] = useState<Currency>('EUR');
   const [timeChoice, setTimeChoice] = useState<'now' | 'later'>('now');
   const [purchaseDate, setPurchaseDate] = useState('');
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
@@ -76,6 +145,8 @@ export function DealHunterConsole() {
   const sendIconRef = useRef<ChevronUpIconHandle>(null);
   const plusIconRef = useRef<CirclePlusIconHandle>(null);
   const micIconRef = useRef<AudioLinesIconHandle>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const cursorsRef = useRef<Record<string, string>>({});
 
   useEffect(() => {
     if (isRecording) {
@@ -87,6 +158,7 @@ export function DealHunterConsole() {
 
   const currentChat = chats.find(c => c.id === currentChatId);
   const messages = currentChat ? currentChat.messages : [];
+  const isThinking = currentChat?.busy === 'compile' || currentChat?.busy === 'run';
   const activeContext = currentChat?.context ?? draftContext;
   const todayIso = new Date().toISOString().slice(0, 10);
   const quickDateOptions = [
@@ -94,6 +166,36 @@ export function DealHunterConsole() {
     { label: '2 weeks', value: dateAfterDays(14) },
     { label: '1 month', value: dateAfterDays(30) }
   ];
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  }, [messages.length, isThinking]);
+
+  useEffect(() => {
+    if (activeSidebarTab !== 'purchases') return;
+    void refreshMetrics();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSidebarTab]);
+
+  const updateChat = (id: string, updater: (chat: Chat) => Chat) => {
+    setChats(prev => prev.map(chat => (chat.id === id ? updater(chat) : chat)));
+  };
+
+  const appendMessages = (id: string, newMessages: ChatMessage[]) => {
+    updateChat(id, chat => ({ ...chat, messages: [...chat.messages, ...newMessages] }));
+  };
+
+  const setChatBusy = (id: string, busy: BusyAction) => {
+    updateChat(id, chat => ({ ...chat, busy }));
+  };
+
+  async function refreshMetrics() {
+    try {
+      setMetrics(await getEvalSummary());
+    } catch {
+      // Safety counters are best-effort; the chat surfaces API errors already.
+    }
+  }
 
   const handleDeleteHistory = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -107,52 +209,247 @@ export function DealHunterConsole() {
     setCurrentChatId(id);
   };
 
-  const [isThinking, setIsThinking] = useState(false);
-
-  const handleSend = (e: React.FormEvent) => {
+  const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inputValue.trim() || isSending) return;
-    
+    const userText = inputValue.trim();
+    if (!userText || isSending) return;
+
     setIsSending(true);
     sendIconRef.current?.startAnimation();
-    const userText = inputValue.trim();
-    
-    setTimeout(() => {
-      let activeId = currentChatId;
-      
-      if (!activeId) {
-        const newId = Date.now().toString();
-        const newChat: Chat = {
-          id: newId,
-          title: userText.length > 20 ? userText.substring(0, 20) + "..." : userText,
-          messages: [{ text: userText, sender: "user" }],
-          context: draftContext
-        };
-        setChats(prev => [newChat, ...prev]);
-        setCurrentChatId(newId);
-        setDraftContext({});
-        activeId = newId;
+    setInputValue("");
+
+    let activeId = currentChatId;
+    let chat = chats.find(c => c.id === activeId);
+
+    if (!activeId || !chat) {
+      activeId = Date.now().toString();
+      chat = {
+        id: activeId,
+        title: userText.length > 20 ? userText.substring(0, 20) + "..." : userText,
+        messages: [{ id: uid(), sender: 'user', text: userText }],
+        context: draftContext,
+        pendingBrief: null,
+        ambiguities: [],
+        mandate: null,
+        runId: null,
+        checkoutKey: null,
+        purchasedDecisionIds: [],
+        mutatedOfferIds: [],
+        busy: null,
+      };
+      setChats(prev => [chat!, ...prev]);
+      setCurrentChatId(activeId);
+      setDraftContext({});
+    } else {
+      appendMessages(activeId, [{ id: uid(), sender: 'user', text: userText }]);
+    }
+
+    const answeringAmbiguities = chat.ambiguities.length > 0 && chat.pendingBrief;
+    const brief = answeringAmbiguities
+      ? `${chat.pendingBrief}, ${userText}`
+      : withContextHints(userText, chat.context);
+
+    setChatBusy(activeId, 'compile');
+    try {
+      const response = await compileMandate(brief, { baseCurrency: chat.context.budget?.currency });
+      updateChat(activeId, c => ({
+        ...c,
+        mandate: response.mandate,
+        ambiguities: response.ambiguities,
+        pendingBrief: brief,
+      }));
+      if (response.ambiguities.length) {
+        appendMessages(activeId, [
+          botText(response.error?.message ?? "I need a bit more detail before I can lock in this mandate:"),
+          ...response.ambiguities.map(item => botText(item.question)),
+        ]);
       } else {
-        setChats(prev => prev.map(chat => 
-          chat.id === activeId 
-            ? { ...chat, messages: [...chat.messages, { text: userText, sender: "user" }] } 
-            : chat
-        ));
+        appendMessages(activeId, [
+          botText("Here is the purchase mandate I compiled from your brief. Approve it and I'll start hunting."),
+          { id: uid(), sender: 'bot', kind: 'mandate', compiled: response },
+        ]);
       }
-      
-      setInputValue("");
+    } catch (error) {
+      appendMessages(activeId, [botError(error)]);
+    } finally {
+      setChatBusy(activeId, null);
       setIsSending(false);
-      setIsThinking(true);
-      
-      setTimeout(() => {
-        setIsThinking(false);
-        setChats(prev => prev.map(chat => 
-          chat.id === activeId 
-            ? { ...chat, messages: [...chat.messages, { text: "Got it, checking that for you...", sender: "bot" }] } 
-            : chat
-        ));
-      }, 2500);
-    }, 400); 
+    }
+  };
+
+  const handleApprove = async (chatId: string, mandate: Mandate) => {
+    setChatBusy(chatId, 'approve');
+    try {
+      const response = await approveMandate(mandate);
+      syncMandate(chatId, response.mandate);
+      appendMessages(chatId, [botText("Mandate approved. Starting the monitoring run…")]);
+      await runMonitoring(chatId, response.mandate);
+    } catch (error) {
+      appendMessages(chatId, [botError(error)]);
+      setChatBusy(chatId, null);
+    }
+  };
+
+  const handleRevoke = async (chatId: string, mandate: Mandate) => {
+    setChatBusy(chatId, 'revoke');
+    try {
+      const response = await revokeMandate(mandate);
+      syncMandate(chatId, response.mandate);
+      appendMessages(chatId, [botText("Mandate revoked. Any checkout on decisions from this mandate is now blocked.")]);
+    } catch (error) {
+      appendMessages(chatId, [botError(error)]);
+    } finally {
+      setChatBusy(chatId, null);
+    }
+  };
+
+  const syncMandate = (chatId: string, mandate: Mandate) => {
+    updateChat(chatId, chat => ({
+      ...chat,
+      mandate: chat.mandate?.id === mandate.id ? mandate : chat.mandate,
+      messages: chat.messages.map(message =>
+        message.sender === 'bot' && message.kind === 'mandate' && message.compiled.mandate.id === mandate.id
+          ? { ...message, compiled: { ...message.compiled, mandate } }
+          : message
+      ),
+    }));
+  };
+
+  const runMonitoring = async (chatId: string, mandate: Mandate) => {
+    setChatBusy(chatId, 'run');
+    try {
+      const checkoutKey = uid();
+      const response = await startRun(mandate.id);
+      cursorsRef.current[response.runId] = "0";
+      updateChat(chatId, chat => ({ ...chat, runId: response.runId, checkoutKey }));
+      await streamRunEvents(chatId, response.runId);
+      await refreshMetrics();
+    } catch (error) {
+      appendMessages(chatId, [botError(error)]);
+    } finally {
+      setChatBusy(chatId, null);
+    }
+  };
+
+  const streamRunEvents = async (chatId: string, runId: string) => {
+    // Same cadence as the original console: poll every 700 ms while the run is RUNNING.
+    for (;;) {
+      const response = await pollEvents(runId, cursorsRef.current[runId] ?? "0");
+      cursorsRef.current[runId] = response.nextCursor;
+      await appendEventMessages(chatId, response.events);
+      if (response.status !== 'RUNNING') break;
+      await sleep(700);
+    }
+  };
+
+  const appendEventMessages = async (chatId: string, events: RunEvent[]) => {
+    for (const event of events) {
+      const message = eventToMessage(event);
+      if (!message) continue;
+      appendMessages(chatId, [message]);
+      await sleep(260);
+    }
+  };
+
+  const eventToMessage = (event: RunEvent): ChatMessage | null => {
+    switch (event.type) {
+      case 'RUN_STARTED':
+        return botText("Monitoring run started — replaying the golden-path scenario with a fixed seed.");
+      case 'OFFER_RECEIVED': {
+        const offer = event.data.offer as CanonicalOffer | undefined;
+        return offer ? { id: uid(), sender: 'bot', kind: 'offer', offer } : null;
+      }
+      case 'DECISION_MADE':
+        return { id: uid(), sender: 'bot', kind: 'decision', decision: event.data as unknown as Decision };
+      case 'OFFER_MUTATED': {
+        const data = event.data as { price?: Money; offerVersion?: number };
+        return botText(
+          data.price
+            ? `Heads up — the seller changed the price to ${formatMoney(data.price)} (offer version ${data.offerVersion}).`
+            : "Heads up — the offer changed after the decision."
+        );
+      }
+      case 'RUN_COMPLETED':
+        return botText("Run completed — every offer has been evaluated.");
+    }
+  };
+
+  const handleCheckout = async (chatId: string, decision: Decision) => {
+    const chat = chats.find(c => c.id === chatId);
+    if (!chat) return;
+    const checkoutKey = chat.checkoutKey ?? uid();
+    if (!chat.checkoutKey) updateChat(chatId, c => ({ ...c, checkoutKey }));
+    setChatBusy(chatId, 'checkout');
+    try {
+      const result = await checkoutDecision(decision, checkoutKey);
+      const receipt = await getReceipt(result.receiptId);
+      updateChat(chatId, c => ({
+        ...c,
+        purchasedDecisionIds: c.purchasedDecisionIds.includes(decision.id)
+          ? c.purchasedDecisionIds
+          : [...c.purchasedDecisionIds, decision.id],
+      }));
+      setPurchases(prev => (prev.some(item => item.id === receipt.id) ? prev : [receipt, ...prev]));
+      if (result.idempotentReplay) {
+        appendMessages(chatId, [botText("The retry returned the same purchase — idempotency holds, no duplicate buy.")]);
+      } else {
+        appendMessages(chatId, [
+          botText("Test checkout completed. Here is your trust receipt:"),
+          { id: uid(), sender: 'bot', kind: 'receipt', receipt },
+        ]);
+      }
+      await refreshMetrics();
+    } catch (error) {
+      appendMessages(chatId, [botError(error)]);
+    } finally {
+      setChatBusy(chatId, null);
+    }
+  };
+
+  const handleMutate = async (chatId: string, decision: Decision) => {
+    const chat = chats.find(c => c.id === chatId);
+    if (!chat?.runId) return;
+    const runId = chat.runId;
+    setChatBusy(chatId, 'mutate');
+    try {
+      await mutateWinner(runId, decision.offerId);
+      updateChat(chatId, c => ({
+        ...c,
+        mutatedOfferIds: c.mutatedOfferIds.includes(decision.offerId)
+          ? c.mutatedOfferIds
+          : [...c.mutatedOfferIds, decision.offerId],
+      }));
+      const response = await pollEvents(runId, cursorsRef.current[runId] ?? "0");
+      cursorsRef.current[runId] = response.nextCursor;
+      await appendEventMessages(chatId, response.events);
+      if (!chat.purchasedDecisionIds.includes(decision.id)) {
+        appendMessages(chatId, [botText("Try the checkout now — revalidation should block the stale decision.")]);
+      }
+    } catch (error) {
+      appendMessages(chatId, [botError(error)]);
+    } finally {
+      setChatBusy(chatId, null);
+    }
+  };
+
+  const handleResetDemo = async () => {
+    if (isResetting) return;
+    setIsResetting(true);
+    setPurchasesNotice(null);
+    try {
+      await resetDemo();
+      setChats([]);
+      setCurrentChatId(null);
+      setDraftContext({});
+      setPurchases([]);
+      cursorsRef.current = {};
+      setMetrics(await getEvalSummary().catch(() => null));
+      setPurchasesNotice("Demo reset — mandates, runs and receipts were cleared.");
+    } catch (error) {
+      setPurchasesNotice(error instanceof ApiClientError ? `${error.code}: ${error.message}` : 'Reset failed.');
+    } finally {
+      setIsResetting(false);
+    }
   };
 
   const toggleRecording = () => {
@@ -171,7 +468,7 @@ export function DealHunterConsole() {
     setIsPlusPopoverOpen(!isPlusPopoverOpen);
   };
 
-  const setContextValue = (key: keyof ShoppingContext, value: string) => {
+  const setContextValue = <K extends keyof ShoppingContext>(key: K, value: ShoppingContext[K]) => {
     if (currentChatId) {
       setChats(prev => prev.map(chat =>
         chat.id === currentChatId
@@ -214,7 +511,7 @@ export function DealHunterConsole() {
       maximumFractionDigits: 2
     }).format(amount);
 
-    setContextValue('budget', formattedAmount);
+    setContextValue('budget', { amount, currency: budgetCurrency, label: formattedAmount });
     setBudgetAmount('');
   };
 
@@ -222,7 +519,7 @@ export function DealHunterConsole() {
     e.preventDefault();
 
     if (timeChoice === 'now') {
-      setContextValue('timing', 'Buy now');
+      setContextValue('timing', { label: 'Buy now', briefHint: 'buy now, auto-buy when stock is low' });
       return;
     }
 
@@ -233,7 +530,60 @@ export function DealHunterConsole() {
       year: 'numeric'
     }).format(new Date(`${purchaseDate}T12:00:00`));
 
-    setContextValue('timing', `Buy by ${formattedDate}`);
+    setContextValue('timing', { label: `Buy by ${formattedDate}`, briefHint: `buy by ${purchaseDate}, ask before buying` });
+  };
+
+  const renderBotMessage = (chat: Chat, message: ChatMessage) => {
+    if (message.sender === 'user') {
+      return <div key={message.id} className="chat-bubble user">{message.text}</div>;
+    }
+    switch (message.kind) {
+      case 'text':
+        return <div key={message.id} className="chat-bubble bot">{message.text}</div>;
+      case 'error':
+        return (
+          <div key={message.id} className="chat-bubble bot">
+            <ErrorNote code={message.code} text={message.text} reasonCodes={message.reasonCodes} />
+          </div>
+        );
+      case 'mandate':
+        return (
+          <div key={message.id} className="chat-bubble bot has-card">
+            <MandateCard
+              compiled={message.compiled}
+              busy={chat.busy !== null}
+              onApprove={() => void handleApprove(chat.id, message.compiled.mandate)}
+              onRevoke={() => void handleRevoke(chat.id, message.compiled.mandate)}
+            />
+          </div>
+        );
+      case 'offer':
+        return (
+          <div key={message.id} className="chat-bubble bot has-card">
+            <OfferLine offer={message.offer} />
+          </div>
+        );
+      case 'decision':
+        return (
+          <div key={message.id} className="chat-bubble bot has-card">
+            <DecisionCard
+              decision={message.decision}
+              capTotal={chat.mandate?.id === message.decision.mandateId ? chat.mandate.maxTotal : null}
+              busy={chat.busy !== null}
+              purchased={chat.purchasedDecisionIds.includes(message.decision.id)}
+              mutated={chat.mutatedOfferIds.includes(message.decision.offerId)}
+              onCheckout={() => void handleCheckout(chat.id, message.decision)}
+              onMutate={() => void handleMutate(chat.id, message.decision)}
+            />
+          </div>
+        );
+      case 'receipt':
+        return (
+          <div key={message.id} className="chat-bubble bot has-card">
+            <ReceiptCard receipt={message.receipt} />
+          </div>
+        );
+    }
   };
 
   return (
@@ -249,10 +599,10 @@ export function DealHunterConsole() {
             </svg>
           </button>
         </div>
-        
+
         <div className="sidebar-content">
           <div className="sidebar-nav">
-            <button 
+            <button
               className={`sidebar-nav-btn ${activeSidebarTab === 'chat' ? 'active' : ''}`}
               onClick={() => setActiveSidebarTab('chat')}
               aria-current={activeSidebarTab === 'chat' ? 'page' : undefined}
@@ -262,7 +612,7 @@ export function DealHunterConsole() {
               </svg>
               <span>Chat</span>
             </button>
-            <button 
+            <button
               className={`sidebar-nav-btn ${activeSidebarTab === 'purchases' ? 'active' : ''}`}
               onClick={() => setActiveSidebarTab('purchases')}
               aria-current={activeSidebarTab === 'purchases' ? 'page' : undefined}
@@ -274,20 +624,20 @@ export function DealHunterConsole() {
               <span>Purchases</span>
             </button>
           </div>
-        
+
           {activeSidebarTab === 'chat' && (
             <>
               {chats.length > 0 && <h2 className="sidebar-title">Recent</h2>}
               <div className="history-list">
                 {chats.map(chat => (
-                  <div 
-                    key={chat.id} 
+                  <div
+                    key={chat.id}
                     className={`history-card ${currentChatId === chat.id ? 'active' : ''}`}
                     onClick={() => handleSelectChat(chat.id)}
                   >
                     <span className="history-name">{chat.title}</span>
-                    <button 
-                      className="delete-history-btn" 
+                    <button
+                      className="delete-history-btn"
                       onClick={(e) => handleDeleteHistory(chat.id, e)}
                       aria-label="Delete"
                     >
@@ -297,6 +647,16 @@ export function DealHunterConsole() {
                 ))}
               </div>
             </>
+          )}
+
+          {activeSidebarTab === 'purchases' && (
+            <div className="history-list">
+              {purchases.map(receipt => (
+                <div key={receipt.id} className="history-card" onClick={() => setActiveSidebarTab('purchases')}>
+                  <span className="history-name">{receipt.purchaseId} · {formatMoney(receipt.cost.total)}</span>
+                </div>
+              ))}
+            </div>
           )}
         </div>
 
@@ -320,6 +680,10 @@ export function DealHunterConsole() {
                 <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21h-4v-.09A1.7 1.7 0 0 0 8.6 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3v-4h.09A1.7 1.7 0 0 0 4.6 8.6a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V3h4v.09A1.7 1.7 0 0 0 15.4 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 9c.15.37.37.7.66.96.3.27.68.42 1.08.43H21v4h-.09A1.7 1.7 0 0 0 19.4 15Z"/></svg>
                 Settings
               </button>
+              <button className="popover-btn" role="menuitem" onClick={() => { setIsUserPanelOpen(false); void handleResetDemo(); }} disabled={isResetting}>
+                <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/></svg>
+                {isResetting ? 'Resetting…' : 'Reset demo'}
+              </button>
               <div className="popover-divider"></div>
               <button className="popover-btn text-red" role="menuitem">
                 <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75"><path d="M10 17l5-5-5-5"/><path d="M15 12H3"/><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/></svg>
@@ -329,7 +693,7 @@ export function DealHunterConsole() {
           )}
           <button
             type="button"
-            className="user-panel" 
+            className="user-panel"
             onClick={() => setIsUserPanelOpen(!isUserPanelOpen)}
             aria-label="User menu"
             aria-expanded={isUserPanelOpen}
@@ -348,12 +712,35 @@ export function DealHunterConsole() {
 
       <main className="chat-area">
         {activeSidebarTab === 'purchases' ? (
-          <div style={{ padding: '40px', maxWidth: '800px', margin: '0 auto', width: '100%', flex: 1, overflowY: 'auto' }}>
-            <h1 style={{ fontSize: '24px', fontWeight: '600', marginBottom: '8px' }}>Your Purchases</h1>
-            <p style={{ color: 'var(--text-muted)', marginBottom: '32px' }}>Review your past shopping orders.</p>
-            <div style={{ padding: '32px', textAlign: 'center', border: '1px dashed var(--border-color)', borderRadius: '12px', color: 'var(--text-muted)' }}>
-              No purchases found.
+          <div className="purchases-page">
+            <div className="purchases-header">
+              <div>
+                <h1>Your Purchases</h1>
+                <p>Review your past shopping orders.</p>
+              </div>
+              <button type="button" className="card-btn secondary" onClick={() => void handleResetDemo()} disabled={isResetting}>
+                {isResetting ? 'Resetting…' : 'Reset demo'}
+              </button>
             </div>
+            {purchasesNotice && <div className="purchases-notice" role="status">{purchasesNotice}</div>}
+            {metrics && (
+              <div className="metrics-grid" aria-label="Safety counters">
+                <div><strong>{metrics.purchases}</strong><span>purchases</span></div>
+                <div><strong>{metrics.decisions}</strong><span>decisions</span></div>
+                <div><strong>{metrics.runs}</strong><span>runs</span></div>
+                <div><strong>{metrics.hardCapViolations}</strong><span>cap violations</span></div>
+                <div><strong>{metrics.duplicateBuys}</strong><span>duplicate buys</span></div>
+              </div>
+            )}
+            {purchases.length === 0 ? (
+              <div className="purchases-empty">No purchases found.</div>
+            ) : (
+              <div className="purchases-list">
+                {purchases.map(receipt => (
+                  <ReceiptCard key={receipt.id} receipt={receipt} />
+                ))}
+              </div>
+            )}
           </div>
         ) : (
           <>
@@ -388,19 +775,15 @@ export function DealHunterConsole() {
             </div>
           ) : (
             <>
-              {messages.map((msg, i) => (
-                <div key={i} className={`chat-bubble ${msg.sender}`}>
-                  {msg.text}
-                </div>
-              ))}
+              {currentChat && messages.map((msg) => renderBotMessage(currentChat, msg))}
               <AnimatePresence>
                 {isThinking && (
-                  <motion.div 
+                  <motion.div
                     initial={{ opacity: 0, scale: 0.9 }}
                     animate={{ opacity: 1, scale: 1 }}
                     exit={{ opacity: 0, scale: 0.9 }}
                     transition={{ duration: 0.3 }}
-                    className="chat-bubble bot" 
+                    className="chat-bubble bot"
                     style={{ padding: '0 16px', display: 'flex', alignItems: 'center', height: '44px' }}
                   >
                     <div style={{ width: '36px', height: '36px', position: 'relative' }}>
@@ -420,6 +803,7 @@ export function DealHunterConsole() {
                   </motion.div>
                 )}
               </AnimatePresence>
+              <div ref={messagesEndRef} />
             </>
           )}
         </div>
@@ -461,7 +845,7 @@ export function DealHunterConsole() {
                     </div>
                     <label className="context-field-label" htmlFor="budget-amount">Maximum amount</label>
                     <div className="money-input">
-                      <select value={budgetCurrency} onChange={(e) => setBudgetCurrency(e.target.value)} aria-label="Currency">
+                      <select value={budgetCurrency} onChange={(e) => setBudgetCurrency(e.target.value as Currency)} aria-label="Currency">
                         <option value="EUR">EUR</option>
                         <option value="USD">USD</option>
                         <option value="GBP">GBP</option>
@@ -516,7 +900,7 @@ export function DealHunterConsole() {
                 {activeContext.budget && (
                   <div className="context-chip">
                     <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75"><path d="M4 7h16v12H4z"/><path d="M4 10h16"/></svg>
-                    <span><small>Budget</small>{activeContext.budget}</span>
+                    <span><small>Budget</small>{activeContext.budget.label}</span>
                     <button type="button" onClick={() => removeContextValue('budget')} aria-label="Remove budget context">
                       <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75"><path d="m7 7 10 10M17 7 7 17"/></svg>
                     </button>
@@ -525,7 +909,7 @@ export function DealHunterConsole() {
                 {activeContext.timing && (
                   <div className="context-chip">
                     <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
-                    <span><small>Timing</small>{activeContext.timing}</span>
+                    <span><small>Timing</small>{activeContext.timing.label}</span>
                     <button type="button" onClick={() => removeContextValue('timing')} aria-label="Remove timing context">
                       <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75"><path d="m7 7 10 10M17 7 7 17"/></svg>
                     </button>
@@ -534,9 +918,9 @@ export function DealHunterConsole() {
               </div>
             )}
             <form className="chat-input-wrapper" onSubmit={handleSend}>
-              <button 
-                type="button" 
-                className="plus-btn has-tooltip" 
+              <button
+                type="button"
+                className="plus-btn has-tooltip"
                 onClick={togglePlusPopover}
                 aria-label="Add options"
                 aria-expanded={isPlusPopoverOpen}
@@ -545,16 +929,16 @@ export function DealHunterConsole() {
                 <CirclePlusIcon ref={plusIconRef} size={20} />
               </button>
 
-              <input 
-                type="text" 
+              <input
+                type="text"
                 className="chat-input"
                 placeholder="Type a message..."
                 value={inputValue}
                 onChange={(e) => setInputValue(e.target.value)}
               />
-              
-              <button 
-                type="button" 
+
+              <button
+                type="button"
                 className={`voice-btn has-tooltip ${isRecording ? 'recording' : ''}`}
                 onClick={toggleRecording}
                 aria-label="Voice input"
@@ -570,13 +954,13 @@ export function DealHunterConsole() {
                   </svg>
                 )}
               </button>
-              
-              <button 
-                type="submit" 
-                className="send-btn has-tooltip" 
+
+              <button
+                type="submit"
+                className="send-btn has-tooltip"
                 aria-label="Send message"
                 data-tooltip="Send"
-                disabled={!inputValue.trim()}
+                disabled={!inputValue.trim() || isSending}
               >
                 <ChevronUpIcon ref={sendIconRef} size={20} />
               </button>

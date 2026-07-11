@@ -1,5 +1,6 @@
 import type {
   CompileMandateResponse,
+  Currency,
   Decision,
   Mandate,
   Receipt,
@@ -51,10 +52,19 @@ async function request<T>(path: string, init?: RequestInit, acceptedErrors: numb
   return data;
 }
 
-export function compileMandate(brief: string) {
+export type CompileMandateOptions = { baseCurrency?: Currency; destinationCountry?: string };
+
+export function compileMandate(brief: string, options: CompileMandateOptions = {}) {
   return request<CompileMandateResponse>(
     "/api/mandates/compile",
-    { method: "POST", body: JSON.stringify({ brief, baseCurrency: "EUR", destinationCountry: "PL" }) },
+    {
+      method: "POST",
+      body: JSON.stringify({
+        brief,
+        baseCurrency: options.baseCurrency ?? "EUR",
+        destinationCountry: options.destinationCountry ?? "PL",
+      }),
+    },
     [422],
   );
 }
