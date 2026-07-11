@@ -65,10 +65,12 @@ export function MandateCard({
           <dt>Product</dt>
           <dd>{mandate.product.query}</dd>
         </div>
-        <div>
-          <dt>Variant</dt>
-          <dd>{mandate.product.size ?? 'any size'} · {mandate.product.condition?.toLowerCase() ?? 'any condition'}</dd>
-        </div>
+        {(mandate.product.size || mandate.product.condition) && (
+          <div>
+            <dt>Variant</dt>
+            <dd>{[mandate.product.size, mandate.product.condition?.toLowerCase()].filter(Boolean).join(' · ')}</dd>
+          </div>
+        )}
         <div>
           <dt>Max total</dt>
           <dd>{mandate.maxTotal ? formatMoney(mandate.maxTotal) : 'no cap'}</dd>

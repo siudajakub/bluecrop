@@ -425,6 +425,7 @@ export function DealHunterConsole() {
     },
   });
   const isRecording = voice.state === 'listening';
+  const isAwaitingClosedAnswer = Boolean(currentChat?.interviewOptions.length);
 
   useEffect(() => {
     if (isRecording) {
@@ -1105,7 +1106,7 @@ export function DealHunterConsole() {
                 )}
               </div>
             )}
-            <form className="chat-input-wrapper" onSubmit={handleSend}>
+            {!isAwaitingClosedAnswer && <form className="chat-input-wrapper" onSubmit={handleSend}>
               <button
                 type="button"
                 className="plus-btn has-tooltip"
@@ -1153,7 +1154,7 @@ export function DealHunterConsole() {
               >
                 <ChevronUpIcon ref={sendIconRef} size={20} />
               </button>
-            </form>
+            </form>}
           </div>
         </div>
         </>

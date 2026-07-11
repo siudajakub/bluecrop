@@ -5,6 +5,7 @@ import { buildApp } from "../apps/api/src/app.js";
 import { loadConfig } from "../apps/api/src/config.js";
 import { FixtureMandateCompiler } from "../apps/api/src/services/mandate-compiler.js";
 import type { OfferScraper } from "../apps/api/src/services/offer-scraper.js";
+import { hasExplicitBudget } from "../apps/api/src/services/product-interviewer.js";
 
 const brief = "Nike Dunk Low, size 43, new, no resellers, maximum 80 EUR with delivery, auto-buy on low stock";
 
@@ -40,7 +41,7 @@ describe("Deal Hunter API", () => {
     expect(first.json()).toMatchObject({ status: "QUESTION", interviewer: "fixture", brief: null });
     expect(first.json().assistantMessage).toContain("budżet");
     expect(first.json().options.length).toBeGreaterThanOrEqual(2);
-    expect(first.json()).toMatchObject({ questionNumber: 1, maxQuestions: 4 });
+    expect(first.json()).toMatchObject({ questionNumber: 1, maxQuestions: 2 });
 
     const ready = await app.inject({
       method: "POST",
@@ -67,15 +68,20 @@ describe("Deal Hunter API", () => {
     expect(search.json().recommendations[0].imageUrl).toBeNull();
   });
 
+  it("does not mistake a product description for an explicit budget", () => {
+    expect(hasExplicitBudget("Chcę kupić gitarę")).toBe(false);
+    expect(hasExplicitBudget("Gitara do 1500 PLN z dostawą")).toBe(true);
+  });
+
   it("forces a plan after the hard interview question limit", async () => {
     const messages = [{ role: "user", content: "Szukam produktu do nowego hobby" }];
-    for (let index = 0; index < 4; index += 1) {
+    for (let index = 0; index < 2; index += 1) {
       messages.push({ role: "assistant", content: `Pytanie ${index + 1}` });
       messages.push({ role: "user", content: `Odpowiedź ${index + 1}` });
     }
     const response = await app.inject({ method: "POST", url: "/api/interviews/respond", payload: { messages } });
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toMatchObject({ status: "READY", options: [], maxQuestions: 4 });
+    expect(response.json()).toMatchObject({ status: "READY", options: [], maxQuestions: 2 });
     expect(response.json().plan).not.toBeNull();
   });
 

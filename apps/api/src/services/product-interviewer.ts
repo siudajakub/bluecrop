@@ -5,13 +5,14 @@ import { PurchasePlanSchema, type InterviewRequest, type InterviewResponse } fro
 import { ApiError } from "../errors.js";
 
 export const PRODUCT_INTERVIEW_INSTRUCTIONS = `Jesteś doradcą zakupowym. Prowadzisz krótki, adaptacyjny wywiad przed wyszukiwaniem produktów.
-Najpierw zrozum cel użytkownika, a nie tylko nazwę produktu. Pytaj o brakujące informacje mające realny wpływ na wybór: zastosowanie i poziom doświadczenia, wymagania konieczne i preferencje, posiadany sprzęt lub kompatybilność, termin zakupu, kraj dostawy, stan nowy/używany, maksymalny pełny koszt z dostawą oraz oczekiwany poziom autonomii zakupowej.
-Zadawaj najwyżej dwa blisko powiązane pytania naraz. Nie pytaj ponownie o informacje już podane. Gdy cel sugeruje kompletne rozwiązanie, wskaż kategorie uzupełniające, ale nie wciskaj dodatków. Przykład: nauka gry na gitarze może wymagać gitary, akcesoriów i wyboru sposobu nauki.
+Najpierw zrozum cel użytkownika, a nie tylko nazwę produktu. Pytaj wyłącznie o brakujące informacje, bez których wyniki byłyby bezużyteczne lub wyraźnie nietrafione. Priorytet mają maksymalny pełny koszt z dostawą oraz kluczowy wariant produktu. Preferencje, termin, stan, akcesoria i poziom autonomii przyjmij rozsądnie lub pozostaw elastyczne, jeśli nie są krytyczne dla danego zakupu.
+Nie pytaj o rozmiar, jeśli dana kategoria nie ma standardowego parametru rozmiaru. W szczególności przy zakupie gitary nie pytaj o jej rozmiar; jeśli wariant instrumentu ma realne znaczenie, zapytaj najwyżej o typ gitary lub przeznaczenie.
+Zadawaj jedno krótkie pytanie naraz i łącznie najwyżej dwa pytania. Nie pytaj ponownie o informacje już podane. Gdy cel sugeruje kompletne rozwiązanie, wskaż kategorie uzupełniające, ale nie wciskaj dodatków.
 Na każdym kroku aktualizuj plan: goal, wszystkie poznane parameters oraz categories potrzebne do wyszukiwania. Kategorie wybierasz samodzielnie na podstawie celu. Rozróżniaj kategorię główną od koniecznych elementów całego rozwiązania. Dla każdej kategorii utwórz konkretną query do wyszukiwarki.
 Odpowiadaj w języku, którego używa użytkownik.
-Gdy brakuje danych istotnych dla dobrego porównania, ustaw status QUESTION i plan null. Dla pytania zwróć 2-5 krótkich, rozłącznych opcji odpowiedzi, które pokrywają typowe wybory. Nie dodawaj opcji „inne”, ponieważ interfejs zawsze udostępnia własną odpowiedź. Gdy masz wystarczające dane, zwięźle podsumuj ustalenia i ustaw status READY, zwróć pustą tablicę options. Brief musi wtedy być samodzielnym, jednoznacznym opisem planu zakupu i zawierać pełny budżet. Plan nie może być null przy READY. Nie rekomenduj jeszcze konkretnego modelu produktu ani sklepu.`;
+Gdy brakuje danych krytycznych, ustaw status QUESTION i plan null. Pełny budżet jest zawsze daną krytyczną: nie wolno ustawić READY, dopóki użytkownik nie podał kwoty i waluty. Każde pytanie musi być zamknięte: zwróć 2-4 krótkie, rozłączne opcje odpowiedzi pokrywające typowe wybory. Użytkownik odpowiada wyłącznie kliknięciem, więc wartości opcji muszą stanowić kompletne odpowiedzi. Gdy możesz wyszukać sensowne propozycje, zwięźle podsumuj ustalenia i ustaw status READY, zwróć pustą tablicę options. Brief musi wtedy być samodzielnym opisem planu zakupu; nie wymyślaj niepodanych ograniczeń. Plan nie może być null przy READY. Nie rekomenduj jeszcze konkretnego modelu produktu ani sklepu.`;
 
-export const MAX_INTERVIEW_QUESTIONS = 4;
+export const MAX_INTERVIEW_QUESTIONS = 2;
 
 export const VOICE_INTERVIEW_INSTRUCTIONS = `${PRODUCT_INTERVIEW_INSTRUCTIONS}
 Rozmawiasz z użytkownikiem głosowo. Mów w języku użytkownika; zanim go poznasz, zaczynaj po polsku. Mów naturalnie i zwięźle: maksymalnie dwa krótkie zdania naraz i jedno pytanie naraz. Jeśli rozmowa dopiero się zaczyna, przywitaj się jednym zdaniem i zapytaj, co użytkownik chce osiągnąć. Nie czytaj na głos długich list ani technicznych podsumowań.
@@ -72,6 +73,12 @@ export class OpenAIProductInterviewer implements ProductInterviewer {
       });
       if (!response.output_parsed) throw new Error("missing parsed output");
       const turn = TurnSchema.parse(response.output_parsed);
+      const userProvidedBudget = input.messages
+        .filter((message) => message.role === "user")
+        .some((message) => hasExplicitBudget(message.content));
+      if (turn.status === "READY" && !userProvidedBudget) {
+        return this.fallback.respond(input);
+      }
       if (mustFinish && turn.status !== "READY") {
         throw new ApiError(422, "INTERVIEW_LIMIT_INVALID", "Model nie zakończył wywiadu po osiągnięciu limitu pytań.");
       }
@@ -103,7 +110,7 @@ export class FixtureProductInterviewer implements ProductInterviewer {
   async respond(input: InterviewRequest): Promise<Omit<InterviewResponse, "interviewer">> {
     const userText = input.messages.filter((message) => message.role === "user").map((message) => message.content).join(" ");
     const lower = userText.toLocaleLowerCase();
-    const hasBudget = /(?:do|budżet|maksymalnie)\s*\d+|\d+\s*(?:pln|eur|usd|gbp|zł)/i.test(userText);
+    const hasBudget = hasExplicitBudget(userText);
     const hasTiming = /(?:dziś|jutro|tygod|miesią|do\s+\w+|nie spieszy)/i.test(userText);
     const hasCondition = /(?:now|używan)/i.test(userText);
     const questionsAsked = input.messages.filter((message) => message.role === "assistant").length;
@@ -124,4 +131,8 @@ export class FixtureProductInterviewer implements ProductInterviewer {
       assistantMessage: "Mam komplet najważniejszych ustaleń. Rozpoczynam wyszukiwanie dopasowanych produktów.",
     };
   }
+}
+
+export function hasExplicitBudget(text: string): boolean {
+  return /(?:do|budżet|budget|limit|maksymalnie|max(?:imum)?|up to)\D{0,40}\d[\d\s]*(?:[.,]\d{1,2})?\s*(?:pln|eur|usd|gbp|zł)|\d[\d\s]*(?:[.,]\d{1,2})?\s*(?:pln|eur|usd|gbp|zł)/i.test(text);
 }
