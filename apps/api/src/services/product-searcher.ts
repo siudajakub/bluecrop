@@ -22,7 +22,7 @@ export class OpenAIProductSearcher implements ProductSearcher {
   private readonly client: OpenAI;
 
   constructor(apiKey: string, private readonly model: string, private readonly pageEnricher?: OfferPageEnricher) {
-    this.client = new OpenAI({ apiKey, timeout: 25_000, maxRetries: 0 });
+    this.client = new OpenAI({ apiKey, timeout: 45_000, maxRetries: 0 });
   }
 
   async search(input: ProductSearchRequest, attempt = 0): Promise<Omit<ProductSearchResponse, "searcher">> {

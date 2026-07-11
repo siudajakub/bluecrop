@@ -52,7 +52,6 @@ export interface ProductInterviewer {
 export class OpenAIProductInterviewer implements ProductInterviewer {
   readonly kind = "openai" as const;
   private readonly client: OpenAI;
-  private readonly fallback = new FixtureProductInterviewer();
 
   constructor(apiKey: string, private readonly model: string) {
     this.client = new OpenAI({ apiKey, timeout: 10_000, maxRetries: 0 });
@@ -68,50 +67,34 @@ export class OpenAIProductInterviewer implements ProductInterviewer {
       const accessoryDecisionKnown = hasAccessoryDecision(allUserText);
       const conditionKnown = hasConditionDecision(allUserText);
       const knownFacts = `\nSERVER-VERIFIED FACTS: user's selected currency is ${input.baseCurrency}; accessory/setup choice ${accessoryDecisionKnown ? "IS already known" : "is missing"}; condition choice ${conditionKnown ? "IS already known" : "is missing"}; total budget including every delivery cost ${userProvidedBudget ? "IS already known" : "is missing"}; purchase strategy ${userProvidedTiming ? "IS already known and MUST be the final answer" : "is missing"}. Any amount stated by the user is automatically the hard delivered-total cap. Discuss and summarize all money in ${input.baseCurrency}. Never ask again for a fact marked as already known and never ask separately about delivery cost.`;
-      const response = await this.client.responses.parse({
-        model: this.model,
-        instructions: PRODUCT_INTERVIEW_INSTRUCTIONS + knownFacts,
-        input: input.messages,
-        reasoning: { effort: "none" },
-        text: { format: zodTextFormat(TurnSchema, "product_interview_turn") },
-      });
-      if (!response.output_parsed) throw new Error("missing parsed output");
-      const turn = TurnSchema.parse(response.output_parsed);
+      let turn = await this.generateTurn(input, knownFacts);
       const triesToCloseInterview = turn.status === "READY" || /budget|spend|buy\s*[_ -]?now|wait|right price/i.test(turn.assistantMessage);
+      let correction: string | null = null;
       if (triesToCloseInterview && !accessoryDecisionKnown) {
-        return {
-          status: "QUESTION", brief: null, plan: null, questionNumber: questionsAsked + 1, maxQuestions: null,
-          assistantMessage: "Do you want the product only, or should I include the essential accessories as a complete starter setup?",
-          options: [
-            { label: "Product only", value: "I want the product only, without extra accessories." },
-            { label: "Complete starter setup", value: "I want a complete starter setup with the essential accessories." },
-            { label: "Show both routes", value: "Compare the product-only option with a complete starter setup." },
-          ],
-        };
+        correction = "Your previous response tried to close the interview too early. Ask the single most relevant contextual question about product-only versus useful accessories/setup. Generate 2-4 concise options tailored to the actual product discussed. Return QUESTION.";
+      } else if (triesToCloseInterview && !conditionKnown) {
+        correction = "Your previous response tried to close the interview too early. Ask a concise, product-specific condition question before budget and strategy. Generate 2-4 contextual options. Return QUESTION.";
+      } else if (turn.status === "READY" && !userProvidedBudget) {
+        correction = `The total all-in budget is missing. Ask exactly one natural question about how much the user wants to spend in ${input.baseCurrency}, with 2-4 context-appropriate price options. Return QUESTION.`;
+      } else if (turn.status === "READY" && !userProvidedTiming) {
+        correction = "The purchase strategy is missing. Ask the final question: buy now or wait for the right price. Generate two natural options whose values explicitly contain BUY_NOW and WAIT_FOR_THE_RIGHT_PRICE. Return QUESTION.";
+      } else if (userProvidedTiming && userProvidedBudget && accessoryDecisionKnown && conditionKnown && turn.status === "QUESTION") {
+        correction = "All required facts are already known and the purchase strategy was the final answer. Do not ask another question. Return READY with a complete English brief and purchase plan based only on the conversation.";
+      } else if (turn.status === "QUESTION" && turn.options.length === 0) {
+        correction = "Return the same best contextual follow-up question, but include 2-4 concise, mutually exclusive answer options generated from the conversation. Return QUESTION.";
       }
-      if (triesToCloseInterview && !conditionKnown) {
-        return {
-          status: "QUESTION", brief: null, plan: null, questionNumber: questionsAsked + 1, maxQuestions: null,
-          assistantMessage: "Should it be new, or is a used product in good condition acceptable?",
-          options: [
-            { label: "New only", value: "The product must be new." },
-            { label: "Used is fine", value: "A used product in good condition is acceptable." },
-            { label: "Either", value: "New or used is fine; prioritize the best value." },
-          ],
-        };
+      if (correction) turn = await this.generateTurn(input, `${knownFacts}\nCORRECTION REQUIRED: ${correction}`);
+      if (turn.status === "READY" && (!userProvidedBudget || !userProvidedTiming)) {
+        throw new ApiError(422, "INTERVIEW_RESULT_INVALID", "The model completed the interview without the required budget or purchase strategy.");
       }
       if (userProvidedTiming && userProvidedBudget && accessoryDecisionKnown && conditionKnown && turn.status === "QUESTION") {
-        return this.fallback.respond(input);
-      }
-      if (turn.status === "READY" && (!userProvidedBudget || !userProvidedTiming)) {
-        return this.fallback.respond(input);
+        throw new ApiError(422, "INTERVIEW_RESULT_INVALID", "The model asked another question after the final purchase-strategy answer.");
       }
       if (turn.status === "READY" && (!turn.plan || !turn.brief)) {
         throw new ApiError(422, "INTERVIEW_RESULT_INVALID", "Model zakończył wywiad bez kompletnego planu zakupu.");
       }
       if (turn.status === "QUESTION" && turn.options.length === 0) {
-        // Każde pytanie musi mieć odpowiedzi zamknięte do kliknięcia — bez nich wracamy do fallbacku.
-        throw new Error("question without options");
+        throw new ApiError(422, "INTERVIEW_RESULT_INVALID", "The model returned a follow-up question without suggested answers.");
       }
       return {
         ...turn,
@@ -123,8 +106,20 @@ export class OpenAIProductInterviewer implements ProductInterviewer {
       };
     } catch (error) {
       if (error instanceof ApiError && error.statusCode === 422) throw error;
-      return this.fallback.respond(input);
+      throw new ApiError(503, "INTERVIEW_UNAVAILABLE", "The AI shopping conversation is temporarily unavailable.");
     }
+  }
+
+  private async generateTurn(input: InterviewRequest, extraInstructions: string) {
+    const response = await this.client.responses.parse({
+      model: this.model,
+      instructions: PRODUCT_INTERVIEW_INSTRUCTIONS + extraInstructions,
+      input: input.messages,
+      reasoning: { effort: "none" },
+      text: { format: zodTextFormat(TurnSchema, "product_interview_turn") },
+    });
+    if (!response.output_parsed) throw new Error("missing parsed output");
+    return TurnSchema.parse(response.output_parsed);
   }
 }
 

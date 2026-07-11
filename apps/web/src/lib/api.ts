@@ -42,10 +42,15 @@ export class ApiClientError extends Error {
 
 async function request<T>(path: string, init?: RequestInit, acceptedErrors: number[] = []): Promise<T> {
   const headers = init?.body ? { "content-type": "application/json", ...init.headers } : init?.headers;
-  const response = await fetch(`${API_URL}${path}`, {
-    ...init,
-    ...(headers ? { headers } : {}),
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${API_URL}${path}`, {
+      ...init,
+      ...(headers ? { headers } : {}),
+    });
+  } catch {
+    throw new ApiClientError("NETWORK_UNAVAILABLE", "The local API connection was interrupted. Retrying is safe.");
+  }
   const data = await response.json() as T & {
     error?: { code: string; message: string; reasonCodes?: string[] };
   };
@@ -96,11 +101,17 @@ export function getRealtimeToken() {
   return request<{ value: string; expiresAt?: number; model: string }>("/api/realtime/token", { method: "POST" });
 }
 
-export function searchProducts(plan: PurchasePlan, baseCurrency: Currency = "PLN") {
-  return request<ProductSearchResponse>("/api/products/search", {
-    method: "POST",
-    body: JSON.stringify({ plan, destinationCountry: "PL", baseCurrency }),
-  });
+export async function searchProducts(plan: PurchasePlan, baseCurrency: Currency = "PLN") {
+  const body = JSON.stringify({ plan, destinationCountry: "PL", baseCurrency });
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      return await request<ProductSearchResponse>("/api/products/search", { method: "POST", body });
+    } catch (error) {
+      if (!(error instanceof ApiClientError) || error.code !== "NETWORK_UNAVAILABLE" || attempt === 2) throw error;
+      await new Promise(resolve => window.setTimeout(resolve, 700 * (attempt + 1)));
+    }
+  }
+  throw new ApiClientError("NETWORK_UNAVAILABLE", "The local API is still restarting. Please try the search again.");
 }
 
 export function approveMandate(mandate: Mandate) {

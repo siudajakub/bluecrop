@@ -417,6 +417,8 @@ export function DealHunterConsole() {
           { label: '7 days', value: 'the next 7 days' },
           { label: '30 days', value: 'the next 30 days' },
         ] }));
+      } else if (results.recommendations.length === 0) {
+        appendMessages(chatId, [botText("I checked the catalog, scraper data, and live web search, but found no verified offer inside your approved all-in budget. I won't show an over-budget product. You can raise the budget or switch to Wait for the right price.")]);
       }
     } catch (error) {
       updateChat(chatId, chat => ({ ...chat, messages: chat.messages.filter(message => message.id !== searchingId) }));
@@ -849,39 +851,25 @@ export function DealHunterConsole() {
             </button>
           </div>
 
-          {activeSidebarTab === 'chat' && (
-            <>
-              {chats.length > 0 && <h2 className="sidebar-title">Recent</h2>}
-              <div className="history-list">
-                {chats.map(chat => (
-                  <div
-                    key={chat.id}
-                    className={`history-card ${currentChatId === chat.id ? 'active' : ''}`}
-                    onClick={() => handleSelectChat(chat.id)}
-                  >
-                    <span className="history-name">{chat.title}</span>
-                    <button
-                      className="delete-history-btn"
-                      onClick={(e) => handleDeleteHistory(chat.id, e)}
-                      aria-label="Delete"
-                    >
-                      <Trash2Icon size={14} />
-                    </button>
-                  </div>
-                ))}
+          {chats.length > 0 && <h2 className="sidebar-title">Recent</h2>}
+          <div className="history-list">
+            {chats.map(chat => (
+              <div
+                key={chat.id}
+                className={`history-card ${currentChatId === chat.id && activeSidebarTab === 'chat' ? 'active' : ''}`}
+                onClick={() => { setActiveSidebarTab('chat'); handleSelectChat(chat.id); }}
+              >
+                <span className="history-name">{chat.title}</span>
+                <button
+                  className="delete-history-btn"
+                  onClick={(e) => handleDeleteHistory(chat.id, e)}
+                  aria-label="Delete"
+                >
+                  <Trash2Icon size={14} />
+                </button>
               </div>
-            </>
-          )}
-
-          {activeSidebarTab === 'purchases' && (
-            <div className="history-list">
-              {purchases.map(receipt => (
-                <div key={receipt.id} className="history-card" onClick={() => setActiveSidebarTab('purchases')}>
-                  <span className="history-name">{receipt.purchaseId} · {formatMoney(receipt.cost.total)}</span>
-                </div>
-              ))}
-            </div>
-          )}
+            ))}
+          </div>
         </div>
 
         <div className="sidebar-currency">
