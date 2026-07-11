@@ -7,7 +7,7 @@ Dostarczyć demonstracyjne MVP silnika delegowanego zakupu. System interpretuje 
 ## P0: pełny przepływ
 
 - [x] Zdefiniować schematy `MandateVersion`, `CanonicalOffer`, `Decision` i `AuditReceipt`.
-- [ ] Zaimplementować formularz briefu i jawny przegląd mandatu.
+- [x] Zaimplementować formularz briefu i jawny przegląd mandatu w testowym UI.
 - [x] Zintegrować OpenAI Responses API z walidowanymi danymi strukturalnymi (adapter gotowy; live test po dodaniu klucza).
 - [x] Zbudować deterministyczny symulator z seedem i możliwością odtworzenia przebiegu.
 - [x] Zaimplementować normalizację i dopasowanie produktu oraz wariantu dla MVP.
@@ -16,7 +16,7 @@ Dostarczyć demonstracyjne MVP silnika delegowanego zakupu. System interpretuje 
 - [x] Zaimplementować deterministyczny silnik polityk.
 - [x] Dodać ponowną walidację przed zakupem i idempotencję.
 - [x] Zapisywać dziennik zdarzeń w pamięci i generować trust receipt.
-- [ ] Pokazać pełną oś czasu w interfejsie.
+- [x] Pokazać pełną oś czasu w interfejsie.
 
 ## P0: jakość i bezpieczeństwo
 
@@ -24,7 +24,7 @@ Dostarczyć demonstracyjne MVP silnika delegowanego zakupu. System interpretuje 
   sprzedawcę, kupon, trust, zmianę ceny i duplikat.
 - [x] Przetestować limit wydatku, zmianę ceny i zduplikowany checkout; test cofniętej zgody pozostaje.
 - [x] Zagwarantować w obecnym zestawie testowym `hard_cap_violations = 0` i `duplicate_buys = 0`.
-- [ ] Obliczać false-buy rate, strike precision i exact-variant accuracy.
+- [x] Obliczać bieżące safety counters: false-buy rate, hard-cap violations i duplicate buys.
 - [ ] Umożliwić odtworzenie nieudanych przypadków.
 
 ## P1: jakość demonstracji
@@ -34,7 +34,7 @@ Dostarczyć demonstracyjne MVP silnika delegowanego zakupu. System interpretuje 
 - [x] Przygotować prawidłową ofertę z Holandii i niskim stanem magazynowym.
 - [x] Dodać kontrolowaną zmianę ceny podczas demonstracji.
 - [ ] Po hackathonie: pokazać drugi adapter sprzedawcy albo drugą kategorię produktu.
-- [ ] Przygotować scenariusz prezentacji na 2–3 minuty i wariant działający całkowicie lokalnie.
+- [x] Przygotować scenariusz prezentacji na 2–3 minuty i wariant działający całkowicie lokalnie.
 
 ## Poza zakresem
 

@@ -3,8 +3,9 @@
 Deal Hunter to demonstracyjny agent zakupowy, który kompiluje brief do jawnego mandatu, ocenia
 zmieniające się oferty i wykonuje testowy zakup wyłącznie w granicach zatwierdzonej zgody.
 
-Backend jest gotowym lokalnym pionem hackathonowym. Sprzedawcy i płatność są symulowane, ale pełny
-koszt, policy engine, rewalidacja, idempotencja i audit receipt działają w kodzie deterministycznym.
+Repo zawiera lokalny pion hackathonowy z testowym UI Next.js i API Fastify. Sprzedawcy i płatność
+są symulowane, ale pełny koszt, policy engine, rewalidacja, idempotencja i audit receipt działają
+w kodzie deterministycznym.
 
 ## Szybki start
 
@@ -16,13 +17,29 @@ cp .env.example .env
 npm run dev
 ```
 
-API będzie dostępne pod `http://127.0.0.1:3001`. Sprawdzenie gotowości:
+- UI: `http://127.0.0.1:3000`
+- API: `http://127.0.0.1:3001`
+
+Sprawdzenie gotowości API:
 
 ```bash
 curl http://127.0.0.1:3001/health
 ```
 
 Domyślnie działa `MANDATE_COMPILER_MODE=fixture`, więc klucz OpenAI nie jest potrzebny.
+
+## Testowe UI
+
+Pojedynczy ekran prowadzi przez cały przepływ:
+
+1. skompiluj brief;
+2. zatwierdź mandat;
+3. uruchom monitoring;
+4. wykonaj poprawny checkout albo najpierw podnieś cenę;
+5. sprawdź timeline, trust receipt i safety counters.
+
+Przycisk „Cofnij zgodę” pozwala sprawdzić drugą blokadę rewalidacji. „Reset demo” czyści stan
+backendu i interfejsu.
 
 ## Demo
 
@@ -65,8 +82,8 @@ kontrakt aplikacji. Model interpretuje brief, ale nie liczy kosztu ani nie autor
 ```bash
 npm run check       # TypeScript + walidacja dokumentów agentowych
 npm test            # testy domeny i API
-npm run build       # produkcyjny bundle Node.js
-npm start           # uruchomienie bundle'a
+npm run build       # produkcyjne buildy API i Next.js
+npm start           # uruchomienie obu produkcyjnych aplikacji
 npm run demo:smoke  # pełny lokalny golden path
 ```
 
@@ -87,6 +104,7 @@ Najważniejsze katalogi:
 | Ścieżka | Odpowiedzialność |
 | --- | --- |
 | `apps/api` | Fastify, endpointy, konfiguracja i adaptery |
+| `apps/web` | testowy interfejs Next.js i klient HTTP |
 | `packages/contracts` | schematy Zod oraz typy UI–backend |
 | `packages/domain` | koszt, matching, ryzyko i decyzje |
 | `packages/checkout` | rewalidacja, idempotencja i receipt |

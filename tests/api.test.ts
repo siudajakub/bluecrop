@@ -48,6 +48,17 @@ describe("Deal Hunter API", () => {
     const receipt = await app.inject({ method: "GET", url: `/api/receipts/${first.json().receiptId}` });
     expect(receipt.statusCode).toBe(200);
     expect(receipt.json().cost.total.amountMinor).toBe(7650);
+
+    const metrics = await app.inject({ method: "GET", url: "/api/evals/summary" });
+    expect(metrics.statusCode).toBe(200);
+    expect(metrics.json()).toMatchObject({
+      runs: 1,
+      decisions: 3,
+      purchases: 1,
+      hardCapViolations: 0,
+      duplicateBuys: 0,
+      falseBuyRate: 0,
+    });
   });
 
   it("blocks checkout when the price changes after the decision", async () => {
@@ -73,6 +84,29 @@ describe("Deal Hunter API", () => {
     expect(checkout.json().error.reasonCodes).toEqual(
       expect.arrayContaining(["OFFER_VERSION_CHANGED", "PRICE_CHANGED", "TOTAL_CAP_EXCEEDED"]),
     );
+  });
+
+  it("blocks checkout after consent is revoked", async () => {
+    const flow = await startGoldenPath(app, "revoked");
+    const revoked = await app.inject({
+      method: "POST",
+      url: `/api/mandates/${flow.mandateId}/revoke`,
+      payload: { expectedVersion: 1, idempotencyKey: "revoke-consent" },
+    });
+    expect(revoked.statusCode).toBe(200);
+    expect(revoked.json().mandate.status).toBe("REVOKED");
+
+    const checkout = await app.inject({
+      method: "POST",
+      url: `/api/decisions/${flow.winner.id}/checkout`,
+      payload: {
+        mandateVersion: flow.winner.mandateVersion,
+        offerVersion: flow.winner.offerVersion,
+        idempotencyKey: "checkout-revoked",
+      },
+    });
+    expect(checkout.statusCode).toBe(409);
+    expect(checkout.json().error.reasonCodes).toContain("CONSENT_CHANGED");
   });
 });
 
@@ -103,5 +137,5 @@ async function startGoldenPath(app: FastifyInstance, suffix: string) {
     .filter((event: { type: string }) => event.type === "DECISION_MADE")
     .map((event: { data: unknown }) => event.data);
   const winner = decisions.find((decision: { action: string }) => decision.action === "AUTO_BUY");
-  return { runId, decisions, winner, actions: decisions.map((decision: { action: string }) => decision.action) };
+  return { mandateId: mandate.id, runId, decisions, winner, actions: decisions.map((decision: { action: string }) => decision.action) };
 }

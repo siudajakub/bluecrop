@@ -96,6 +96,13 @@ POST /api/mandates/m_01/approve
 { "expectedVersion": 1, "idempotencyKey": "approve-demo-01" }
 ```
 
+Cofnięcie zgody podbija wersję mandatu i blokuje późniejszy checkout:
+
+```json
+POST /api/mandates/m_01/revoke
+{ "expectedVersion": 1, "idempotencyKey": "revoke-demo-01" }
+```
+
 ```json
 POST /api/runs
 { "mandateId": "m_01", "scenarioId": "golden-path", "seed": 20260711,
@@ -188,6 +195,21 @@ POST /api/runs/run_01/mutations
 Odpowiedź zawiera ofertę z podbitą wersją oraz nowy kursor. Checkout utworzony na poprzedniej
 wersji zwraca `409 REVALIDATION_FAILED` z `OFFER_VERSION_CHANGED`, `PRICE_CHANGED` i — jeśli pełny
 koszt przekroczył limit — `TOTAL_CAP_EXCEEDED`.
+
+### Safety counters
+
+```json
+GET /api/evals/summary
+{
+  "runs": 1,
+  "decisions": 3,
+  "purchases": 1,
+  "hardCapViolations": 0,
+  "duplicateBuys": 0,
+  "falseBuyRate": 0,
+  "decisionCounts": { "IGNORE": 2, "ALERT": 0, "ASK_USER": 0, "AUTO_BUY": 1 }
+}
+```
 
 ## Dane współdzielone
 

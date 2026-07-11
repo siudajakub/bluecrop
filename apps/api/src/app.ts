@@ -46,7 +46,9 @@ export type BuildAppOptions = {
 export async function buildApp(options: BuildAppOptions): Promise<FastifyInstance> {
   const app = Fastify({ logger: options.logger ?? false });
   const store = options.store ?? new InMemoryStore();
-  await app.register(cors, { origin: options.config.webOrigin });
+  await app.register(cors, {
+    origin: [...new Set([options.config.webOrigin, "http://localhost:3000", "http://127.0.0.1:3000"])],
+  });
 
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof ApiError) {
@@ -61,6 +63,11 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
           message: "Żądanie nie spełnia kontraktu.",
           fieldErrors: error.issues.map((issue) => ({ field: issue.path.join("."), code: issue.code })),
         },
+      });
+    }
+    if (isClientHttpError(error)) {
+      return reply.status(error.statusCode).send({
+        error: { code: "INVALID_REQUEST", message: error.message },
       });
     }
     app.log.error(error);
@@ -117,6 +124,22 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     const approved = MandateSchema.parse({ ...mandate, status: "APPROVED" });
     store.mandates.set(approved.id, approved);
     const response = { mandate: approved, idempotentReplay: false };
+    store.idempotency.set(cacheKey, response);
+    return response;
+  });
+
+  app.post<{ Params: { mandateId: string } }>("/api/mandates/:mandateId/revoke", async (request) => {
+    const input = ApproveBodySchema.parse(request.body);
+    const cacheKey = `revoke:${input.idempotencyKey}`;
+    const cached = store.idempotency.get(cacheKey);
+    if (cached) return cached;
+    const mandate = getMandate(store, request.params.mandateId);
+    if (mandate.version !== input.expectedVersion) {
+      throw new ApiError(409, "VERSION_CONFLICT", "Mandat ma nowszą wersję.");
+    }
+    const revoked = MandateSchema.parse({ ...mandate, version: mandate.version + 1, status: "REVOKED" });
+    store.mandates.set(revoked.id, revoked);
+    const response = { mandate: revoked, idempotentReplay: false };
     store.idempotency.set(cacheKey, response);
     return response;
   });
@@ -234,6 +257,30 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     return receipt;
   });
 
+  app.get("/api/evals/summary", async () => {
+    const decisions = [...store.runs.values()].flatMap((run) => run.decisions);
+    const receipts = [...store.receipts.values()];
+    const hardCapViolations = receipts.filter((receipt) => {
+      const mandate = store.mandates.get(receipt.mandateId);
+      return mandate?.maxTotal ? receipt.cost.total.amountMinor > mandate.maxTotal.amountMinor : false;
+    }).length;
+    const duplicateBuys = receipts.length - new Set(receipts.map((receipt) => receipt.purchaseId)).size;
+    return {
+      runs: store.runs.size,
+      decisions: decisions.length,
+      purchases: receipts.length,
+      hardCapViolations,
+      duplicateBuys,
+      falseBuyRate: receipts.length ? hardCapViolations / receipts.length : 0,
+      decisionCounts: Object.fromEntries(
+        ["IGNORE", "ALERT", "ASK_USER", "AUTO_BUY"].map((action) => [
+          action,
+          decisions.filter((decision) => decision.action === action).length,
+        ]),
+      ),
+    };
+  });
+
   app.post("/api/demo/reset", async () => {
     store.reset();
     return { status: "RESET", seed: 20260711 };
@@ -260,4 +307,10 @@ function findDecision(store: InMemoryStore, decisionId: string): { run: Run; dec
     if (decision) return { run, decision };
   }
   throw new ApiError(404, "DECISION_NOT_FOUND", "Nie znaleziono decyzji.");
+}
+
+function isClientHttpError(error: unknown): error is Error & { statusCode: number } {
+  if (!(error instanceof Error) || !("statusCode" in error)) return false;
+  const statusCode = (error as { statusCode?: unknown }).statusCode;
+  return typeof statusCode === "number" && statusCode >= 400 && statusCode < 500;
 }

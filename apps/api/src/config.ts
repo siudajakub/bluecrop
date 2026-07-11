@@ -9,7 +9,7 @@ export type AppConfig = {
   openAIModel: string;
 };
 
-export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
+export function loadConfig(env: Record<string, string | undefined> = process.env): AppConfig {
   const compilerMode = env.MANDATE_COMPILER_MODE === "openai" ? "openai" : "fixture";
   const base = {
     port: Number(env.PORT ?? 3001),

@@ -7,8 +7,7 @@ obszary plików; współdzielony kontrakt zmienia wyłącznie właściciel backe
 
 | Slug | Outcome / acceptance | Claim | Contract / dependency | Priority | State |
 | --- | --- | --- | --- | --- | --- |
-| `web-golden-path` | UI przechodzi brief, mandat, monitoring, decyzję i receipt na fixture/API | `apps/web/**` | ui-api-v1; demo-fixtures | P0 | AVAILABLE |
-| `demo-hardening` | Reset, healthcheck i pełny golden path działają z jednego runbooka | `scripts/demo/**`; `docs/hackathon/demo.md` | wszystkie P0 | P1 | PAUSED |
+| — | — | — | — | — | — |
 
 Właściciel `domain-contracts`, `decision-engine`, `demo-fixtures` i `safe-checkout`: Jakub.
 Właściciel `web-golden-path`: osobny frontend owner. `demo-hardening` jest wspólną integracją prowadzoną przez
@@ -19,6 +18,8 @@ integration captain. Stany planowania: `AVAILABLE`, `PAUSED`, `CUT`.
 | Lane | Owner | Branch / PR | Contract boundary | State | Next integration action |
 | --- | --- | --- | --- | --- | --- |
 | backend-golden-path | Jakub | lokalny working tree / brak PR | `ui-api-v1 FROZEN` | READY | dodać klucz i wykonać live OpenAI smoke |
+| web-golden-path | frontend | lokalny working tree / brak PR | `ui-api-v1 FROZEN` | READY | połączyć z docelowym UI albo użyć jako demo |
+| demo-hardening | zespół | lokalny working tree / brak PR | build + browser smoke | READY | wykonać próbę prezentacji z OpenAI |
 
 Stany delivery: `ACTIVE`, `BLOCKED`, `READY`, `INTEGRATED`, `CUT`.
 
@@ -39,3 +40,4 @@ Stany delivery: `ACTIVE`, `BLOCKED`, `READY`, `INTEGRATED`, `CUT`.
 - 2026-07-11 — deadline to 18:00 CEST; feature freeze 16:30, demo freeze 17:20.
 - 2026-07-11 — stack: Next.js frontend, osobny backend Node.js, TypeScript i npm workspaces.
 - 2026-07-11 — backend fixture golden path READY: 12 testów, build i smoke przechodzą; live OpenAI czeka na klucz.
+- 2026-07-11 — testowe UI READY: build produkcyjny i browser smoke happy/failure przechodzą.
