@@ -32,11 +32,10 @@ import {
   startRun,
   type EvalSummary,
 } from '@/lib/api';
-import { useVoiceInterview } from '@/lib/voice-interview';
 import { ChevronUpIcon, type ChevronUpIconHandle } from './chevron-up-icon';
 import { CirclePlusIcon, type CirclePlusIconHandle } from './circle-plus-icon';
 import { Trash2Icon } from './trash2-icon';
-import { AudioLinesIcon, type AudioLinesIconHandle } from './audio-lines-icon';
+import { LoaderCircleIcon } from './loader-circle-icon';
 import BlurText from './blur-text';
 import MetaBalls from './meta-balls';
 import { motion, AnimatePresence } from 'motion/react';
@@ -44,13 +43,16 @@ import {
   DecisionCard,
   ErrorNote,
   MandateCard,
+  MockPurchaseCard,
   OfferLine,
+  ProductImage,
   ReceiptCard,
   RecommendationList,
   SearchTrace,
   SearchingCard,
   formatMoney,
   type ChatMessage,
+  type MockPurchase,
 } from './chat-cards';
 
 interface ShoppingContext {
@@ -76,6 +78,7 @@ interface Chat {
   interviewOptions: { label: string; value: string }[];
   purchasePlan: PurchasePlan | null;
   waitingForTime: boolean;
+  waitingForBudgetRevision: boolean;
 }
 
 function dateAfterDays(days: number) {
@@ -115,11 +118,42 @@ function sleep(ms: number) {
   return new Promise<void>((resolve) => setTimeout(resolve, ms));
 }
 
+function parseBudgetRevision(value: string): number | null {
+  const raw = value.replace(/[^\d.,]/g, '');
+  if (!raw) return null;
+  const lastComma = raw.lastIndexOf(',');
+  const lastDot = raw.lastIndexOf('.');
+  const separator = Math.max(lastComma, lastDot);
+  const hasDecimalCents = separator >= 0 && raw.length - separator - 1 <= 2;
+  const normalized = hasDecimalCents
+    ? `${raw.slice(0, separator).replace(/[.,]/g, '')}.${raw.slice(separator + 1)}`
+    : raw.replace(/[.,]/g, '');
+  const amount = Number(normalized);
+  return Number.isFinite(amount) && amount > 0 ? amount : null;
+}
+
+function revisePlanBudget(plan: PurchasePlan, amount: number, currency: Currency): PurchasePlan {
+  const budgetValue = `${amount} ${currency} maximum delivered total`;
+  let replaced = false;
+  const parameters = plan.parameters.map(parameter => {
+    if (!/budget|spend|price|cost|maximum|max total|limit/i.test(parameter.name)) return parameter;
+    replaced = true;
+    return { ...parameter, value: budgetValue, priority: 'REQUIRED' as const };
+  });
+  if (!replaced) parameters.push({ name: 'Maximum delivered total', value: budgetValue, priority: 'REQUIRED' });
+  return {
+    ...plan,
+    summary: `${plan.summary.replace(/\s*Revised maximum delivered total:[^.]+\.?$/i, '')} Revised maximum delivered total: ${amount} ${currency}.`,
+    parameters,
+  };
+}
+
 export function DealHunterConsole() {
   const [chats, setChats] = useState<Chat[]>([]);
   const [currentChatId, setCurrentChatId] = useState<string | null>(null);
   const [draftContext, setDraftContext] = useState<ShoppingContext>({});
   const [purchases, setPurchases] = useState<Receipt[]>([]);
+  const [mockPurchases, setMockPurchases] = useState<MockPurchase[]>([]);
   const [metrics, setMetrics] = useState<EvalSummary | null>(null);
   const [purchasesNotice, setPurchasesNotice] = useState<string | null>(null);
   const [isResetting, setIsResetting] = useState(false);
@@ -139,6 +173,8 @@ export function DealHunterConsole() {
   const [pendingCheckout, setPendingCheckout] = useState<{ chatId: string; decision: Decision } | null>(null);
   const [selectedOffer, setSelectedOffer] = useState<ProductRecommendation | null>(null);
   const [mockPaymentComplete, setMockPaymentComplete] = useState(false);
+  const [mockPaymentStage, setMockPaymentStage] = useState<'idle' | 'authorizing' | 'delivery' | 'approved'>('idle');
+  const purchasedOfferUrls = new Set(mockPurchases.map(purchase => purchase.offer.url));
 
   // Welcome message animation states
   const [phraseIndex, setPhraseIndex] = useState(0);
@@ -164,13 +200,11 @@ export function DealHunterConsole() {
 
   const sendIconRef = useRef<ChevronUpIconHandle>(null);
   const plusIconRef = useRef<CirclePlusIconHandle>(null);
-  const micIconRef = useRef<AudioLinesIconHandle>(null);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const chatMessagesRef = useRef<HTMLDivElement>(null);
   const cursorsRef = useRef<Record<string, string>>({});
   const chatsRef = useRef<Chat[]>([]);
   chatsRef.current = chats;
   const interviewsRef = useRef<Record<string, InterviewMessage[]>>({});
-  const voiceChatIdRef = useRef<string | null>(null);
 
   const currentChat = chats.find(c => c.id === currentChatId);
   const messages = currentChat ? currentChat.messages : [];
@@ -184,13 +218,51 @@ export function DealHunterConsole() {
   ];
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
-  }, [messages.length, isThinking]);
+    const container = chatMessagesRef.current;
+    if (!container || activeSidebarTab !== 'chat') return;
+
+    let animationFrame: number | null = null;
+    const scrollToLatest = () => {
+      if (animationFrame !== null) window.cancelAnimationFrame(animationFrame);
+      animationFrame = window.requestAnimationFrame(() => {
+        container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
+      });
+    };
+
+    const resizeObserver = new ResizeObserver(scrollToLatest);
+    const observeMessageBlocks = () => {
+      resizeObserver.disconnect();
+      container.querySelectorAll<HTMLElement>(':scope > *').forEach(element => resizeObserver.observe(element));
+    };
+    const mutationObserver = new MutationObserver(() => {
+      observeMessageBlocks();
+      scrollToLatest();
+    });
+
+    observeMessageBlocks();
+    mutationObserver.observe(container, { childList: true, subtree: true, characterData: true });
+    scrollToLatest();
+
+    return () => {
+      if (animationFrame !== null) window.cancelAnimationFrame(animationFrame);
+      mutationObserver.disconnect();
+      resizeObserver.disconnect();
+    };
+  }, [activeSidebarTab, currentChatId]);
 
   useEffect(() => {
     // Load purchase history once on mount so it survives page reloads.
     void refreshReceipts();
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    const mobileLayout = window.matchMedia('(max-width: 768px)');
+    const syncSidebarToViewport = (matches: boolean) => setIsSidebarOpen(!matches);
+    syncSidebarToViewport(mobileLayout.matches);
+    const handleViewportChange = (event: MediaQueryListEvent) => syncSidebarToViewport(event.matches);
+    mobileLayout.addEventListener('change', handleViewportChange);
+    return () => mobileLayout.removeEventListener('change', handleViewportChange);
   }, []);
 
   useEffect(() => {
@@ -237,7 +309,6 @@ export function DealHunterConsole() {
 
   const handleDeleteHistory = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (voiceChatIdRef.current === id) voice.stop();
     delete interviewsRef.current[id];
     setChats(prev => prev.filter(c => c.id !== id));
     if (currentChatId === id) {
@@ -246,17 +317,23 @@ export function DealHunterConsole() {
   };
 
   const handleSelectChat = (id: string) => {
-    if (voice.state !== 'idle' && voiceChatIdRef.current !== id) voice.stop();
     setCurrentChatId(id);
+    closeSidebarOnMobile();
   };
 
   const handleNewChat = () => {
-    voice.stop();
     setCurrentChatId(null);
     setActiveSidebarTab('chat');
     setDraftContext({});
     setInputValue('');
     setIsPlusPopoverOpen(false);
+    closeSidebarOnMobile();
+  };
+
+  const closeSidebarOnMobile = () => {
+    if (typeof window !== 'undefined' && window.matchMedia('(max-width: 768px)').matches) {
+      setIsSidebarOpen(false);
+    }
   };
 
   const createChat = (title: string, messages: ChatMessage[]): Chat => {
@@ -276,6 +353,7 @@ export function DealHunterConsole() {
       interviewOptions: [],
       purchasePlan: null,
       waitingForTime: false,
+      waitingForBudgetRevision: false,
     };
     setChats(prev => [chat, ...prev]);
     setCurrentChatId(chat.id);
@@ -291,7 +369,7 @@ export function DealHunterConsole() {
     void sendUserMessage(userText);
   };
 
-  const sendUserMessage = async (userText: string) => {
+  const sendUserMessage = async (userText: string, displayText = userText) => {
     if (!userText || isSending) return;
 
     setIsSending(true);
@@ -301,23 +379,41 @@ export function DealHunterConsole() {
     let chat = chats.find(c => c.id === activeId);
 
     if (!activeId || !chat) {
-      chat = createChat(userText, [{ id: uid(), sender: 'user', text: userText }]);
+      chat = createChat(displayText, [{ id: uid(), sender: 'user', text: displayText }]);
       activeId = chat.id;
     } else {
-      appendMessages(activeId, [{ id: uid(), sender: 'user', text: userText }]);
+      appendMessages(activeId, [{ id: uid(), sender: 'user', text: displayText }]);
       updateChat(activeId, c => ({ ...c, interviewOptions: [] }));
     }
 
     try {
+      if (chat.waitingForBudgetRevision) {
+        const amount = parseBudgetRevision(userText);
+        if (amount === null || !chat.purchasePlan) {
+          appendMessages(activeId, [botText(`Enter the new maximum total as a number, for example 1900 ${preferredCurrency}.`)]);
+          return;
+        }
+        const formatted = new Intl.NumberFormat('en', { style: 'currency', currency: preferredCurrency, maximumFractionDigits: 2 }).format(amount);
+        const revisedContext: ShoppingContext = {
+          ...chat.context,
+          budget: { amount, currency: preferredCurrency, label: formatted },
+        };
+        const revisedPlan = revisePlanBudget(chat.purchasePlan, amount, preferredCurrency);
+        updateChat(activeId, current => ({
+          ...current,
+          context: revisedContext,
+          purchasePlan: revisedPlan,
+          waitingForBudgetRevision: false,
+          interviewOptions: [],
+        }));
+        appendMessages(activeId, [botText(`I updated the hard delivered-total limit to ${formatted}. Review the revised mandate before I search again.`)]);
+        const baseBrief = chat.pendingBrief ?? chat.purchasePlan.summary;
+        await compileBrief(activeId, `${baseBrief}. Revised maximum delivered total: ${amount} ${preferredCurrency}. All other product requirements stay unchanged.`, revisedContext);
+        return;
+      }
       if (chat.waitingForTime) {
         updateChat(activeId, current => ({ ...current, waitingForTime: false, interviewOptions: [] }));
         appendMessages(activeId, [botText(`Price watch activated for ${userText}. I’ll keep the approved budget and product requirements unchanged.`)]);
-        return;
-      }
-      if (voice.state !== 'idle' && voiceChatIdRef.current === activeId) {
-        // An active voice conversation owns the interview: typed answers join it and the reply is spoken.
-        pushInterviewEntry(activeId, 'user', userText);
-        voice.sendUserText(userText);
         return;
       }
       if (!chat.mandate && !chat.pendingBrief) {
@@ -393,7 +489,13 @@ export function DealHunterConsole() {
 
   const finishInterview = async (chatId: string, response: InterviewResponse) => {
     if (!response.brief || !response.plan) return;
-    updateChat(chatId, c => ({ ...c, interviewOptions: [], purchasePlan: response.plan }));
+    const generatedTitle = (response.chatTitle ?? response.plan.goal).trim();
+    updateChat(chatId, c => ({
+      ...c,
+      title: generatedTitle.length > 34 ? `${generatedTitle.slice(0, 34).trim()}…` : generatedTitle || c.title,
+      interviewOptions: [],
+      purchasePlan: response.plan,
+    }));
     const context = chatsRef.current.find(c => c.id === chatId)?.context ?? {};
     await compileBrief(chatId, response.brief, context);
   };
@@ -402,11 +504,13 @@ export function DealHunterConsole() {
     const searchingId = uid();
     appendMessages(chatId, [{ id: searchingId, sender: 'bot', kind: 'searching' }]);
     try {
-      const results = await searchProducts(plan, preferredCurrency);
+      const approvedCap = chatsRef.current.find(chat => chat.id === chatId)?.mandate?.maxTotal ?? undefined;
+      const results = await searchProducts(plan, preferredCurrency, approvedCap);
       const activity = results.searchActivity;
+      const displayedOfferCount = results.recommendations.length;
       updateChat(chatId, chat => ({ ...chat, messages: [
         ...chat.messages.filter(message => message.id !== searchingId),
-        { id: uid(), sender: 'bot', kind: 'trace', sources: activity?.catalogOffersScanned ?? results.recommendations.length, categories: results.searchedCategories, sourceLabels: activity?.sources ?? ['OpenAI web search'], catalogMatches: activity?.catalogMatches ?? 0, webMatches: activity?.webMatches ?? results.recommendations.length, rejected: activity?.rejectedAsIrrelevant ?? 0 },
+        { id: uid(), sender: 'bot', kind: 'trace', recordsChecked: activity?.recordsChecked ?? activity?.catalogOffersScanned ?? displayedOfferCount, matches: displayedOfferCount, sourceCount: activity?.sourceCount ?? activity?.sources.length ?? 1, webSourcesChecked: activity?.webSourcesChecked ?? activity?.webMatches ?? 0, categories: results.searchedCategories, sourceLabels: activity?.sources ?? ['OpenAI web search'] },
         { id: uid(), sender: 'bot', kind: 'recommendations', items: results.recommendations },
       ] }));
       const isWaitMode = /wait|right price|price watch|later/i.test(`${plan.summary} ${plan.parameters.map(item => item.value).join(' ')}`);
@@ -418,63 +522,14 @@ export function DealHunterConsole() {
           { label: '30 days', value: 'the next 30 days' },
         ] }));
       } else if (results.recommendations.length === 0) {
-        appendMessages(chatId, [botText("I checked the catalog, scraper data, and live web search, but found no verified offer inside your approved all-in budget. I won't show an over-budget product. You can raise the budget or switch to Wait for the right price.")]);
+        appendMessages(chatId, [botText(`I searched product_offers.json, the scraper catalog, and live web sources, but no real offer fits the approved total. Enter a higher maximum in ${preferredCurrency} and I’ll prepare a revised mandate.`)]);
+        updateChat(chatId, chat => ({ ...chat, waitingForBudgetRevision: true }));
       }
     } catch (error) {
       updateChat(chatId, chat => ({ ...chat, messages: chat.messages.filter(message => message.id !== searchingId) }));
       appendMessages(chatId, [botError(error)]);
     }
   };
-
-  const voice = useVoiceInterview({
-    onTranscript: (role, text) => {
-      const chatId = voiceChatIdRef.current;
-      if (!chatId) return;
-      pushInterviewEntry(chatId, role, text);
-      appendMessages(chatId, [role === 'user' ? { id: uid(), sender: 'user', text } : botText(text)]);
-    },
-    onFinalize: async (summary) => {
-      const chatId = voiceChatIdRef.current;
-      if (!chatId) return { kind: 'retry' };
-      const history = interviewsRef.current[chatId] ?? [];
-      const confirmation: InterviewMessage = {
-        role: 'user',
-        content: summary ? `I confirm the requirements: ${summary}` : 'I confirm the requirements from the voice conversation.',
-      };
-      setChatBusy(chatId, 'compile');
-      try {
-        const response = await respondToInterview([...history, confirmation], preferredCurrency);
-        if (response.status === 'READY' && response.brief && response.plan) {
-          await finishInterview(chatId, response);
-          return { kind: 'done' };
-        }
-        return { kind: 'ask', question: response.assistantMessage };
-      } catch (error) {
-        appendMessages(chatId, [botError(error)]);
-        return { kind: 'retry' };
-      } finally {
-        setChatBusy(chatId, null);
-      }
-    },
-    onError: (message) => {
-      const chatId = voiceChatIdRef.current ?? currentChatId;
-      if (chatId) {
-        appendMessages(chatId, [{ id: uid(), sender: 'bot', kind: 'error', code: 'VOICE_ERROR', text: message, reasonCodes: [] }]);
-      }
-    },
-    onStop: () => {
-      voiceChatIdRef.current = null;
-    },
-  });
-  const isRecording = voice.state === 'listening';
-
-  useEffect(() => {
-    if (isRecording) {
-      micIconRef.current?.startAnimation();
-    } else {
-      micIconRef.current?.stopAnimation();
-    }
-  }, [isRecording]);
 
   const handleApprove = async (chatId: string, mandate: Mandate) => {
     setChatBusy(chatId, 'approve');
@@ -638,12 +693,12 @@ export function DealHunterConsole() {
     setIsResetting(true);
     setPurchasesNotice(null);
     try {
-      voice.stop();
       await resetDemo();
       setChats([]);
       setCurrentChatId(null);
       setDraftContext({});
       setPurchases([]);
+      setMockPurchases([]);
       cursorsRef.current = {};
       interviewsRef.current = {};
       setMetrics(await getEvalSummary().catch(() => null));
@@ -655,17 +710,25 @@ export function DealHunterConsole() {
     }
   };
 
-  const toggleRecording = () => {
-    if (voice.state !== 'idle') {
-      voice.stop();
-      return;
-    }
-    let activeId = currentChatId;
-    if (!activeId || !chats.some(c => c.id === activeId)) {
-      activeId = createChat('Voice conversation', []).id;
-    }
-    voiceChatIdRef.current = activeId;
-    void voice.start(interviewsRef.current[activeId] ?? []);
+  const completeMockPayment = (offer: ProductRecommendation) => {
+    setMockPaymentComplete(true);
+    setMockPurchases(current => current.some(purchase => purchase.offer.url === offer.url) ? current : [{
+      id: `mock-${Date.now()}`,
+      offer,
+      purchasedAt: new Date().toISOString(),
+      deliveryEta: offer.deliveryEstimate ? `Estimated delivery: ${offer.deliveryEstimate}` : 'Estimated delivery: 2–4 business days',
+    }, ...current]);
+  };
+
+  const processMockPayment = async (offer: ProductRecommendation) => {
+    if (mockPaymentStage !== 'idle') return;
+    setMockPaymentStage('authorizing');
+    await sleep(1250);
+    setMockPaymentStage('delivery');
+    await sleep(1050);
+    setMockPaymentStage('approved');
+    await sleep(650);
+    completeMockPayment(offer);
   };
 
   const toggleSidebar = () => {
@@ -798,7 +861,7 @@ export function DealHunterConsole() {
       case 'recommendations':
         return (
           <div key={message.id} className="chat-bubble bot has-card">
-            <RecommendationList items={message.items} onPay={(offer) => { setMockPaymentComplete(false); setSelectedOffer(offer); }} />
+            <RecommendationList items={message.items} purchasedUrls={purchasedOfferUrls} onPay={(offer) => { setMockPaymentComplete(false); setMockPaymentStage('idle'); setSelectedOffer(offer); }} />
           </div>
         );
       case 'searching':
@@ -811,7 +874,7 @@ export function DealHunterConsole() {
   return (
     <div className="app-container">
       {/* Sidebar: Brand, History & User Panel */}
-      <aside className={`sidebar ${isSidebarOpen ? '' : 'collapsed'}`}>
+      <aside id="app-sidebar" className={`sidebar ${isSidebarOpen ? '' : 'collapsed'}`} aria-hidden={!isSidebarOpen}>
         <div className="sidebar-header">
           <h1 className="brand-name">bluecrop</h1>
           <button className="toggle-sidebar-btn" onClick={toggleSidebar} aria-label="Collapse sidebar">
@@ -830,7 +893,7 @@ export function DealHunterConsole() {
             </button>
             <button
               className={`sidebar-nav-btn ${activeSidebarTab === 'chat' ? 'active' : ''}`}
-              onClick={() => setActiveSidebarTab('chat')}
+              onClick={() => { setActiveSidebarTab('chat'); closeSidebarOnMobile(); }}
               aria-current={activeSidebarTab === 'chat' ? 'page' : undefined}
             >
               <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
@@ -840,7 +903,7 @@ export function DealHunterConsole() {
             </button>
             <button
               className={`sidebar-nav-btn ${activeSidebarTab === 'purchases' ? 'active' : ''}`}
-              onClick={() => setActiveSidebarTab('purchases')}
+              onClick={() => { setActiveSidebarTab('purchases'); closeSidebarOnMobile(); }}
               aria-current={activeSidebarTab === 'purchases' ? 'page' : undefined}
             >
               <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
@@ -932,32 +995,41 @@ export function DealHunterConsole() {
         </div>
       </aside>
 
+      <button
+        type="button"
+        className={`sidebar-backdrop ${isSidebarOpen ? 'open' : ''}`}
+        onClick={() => setIsSidebarOpen(false)}
+        aria-label="Close sidebar"
+        tabIndex={isSidebarOpen ? 0 : -1}
+      />
+
       <main className="chat-area">
+        {!isSidebarOpen && (
+          <button className="floating-toggle-btn" onClick={toggleSidebar} aria-label="Open sidebar" aria-controls="app-sidebar" aria-expanded="false">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+              <line x1="9" y1="3" x2="9" y2="21"></line>
+            </svg>
+          </button>
+        )}
         {activeSidebarTab === 'purchases' ? (
           <div className="purchases-page">
             <div className="purchases-header">
               <div>
-                <h1>Your Purchases</h1>
-                <p>Review your past shopping orders.</p>
+                <h1>Your purchases</h1>
+                <p>Orders and delivery tracking.</p>
               </div>
               <button type="button" className="card-btn secondary" onClick={() => void handleResetDemo()} disabled={isResetting}>
                 {isResetting ? 'Resetting…' : 'Reset demo'}
               </button>
             </div>
             {purchasesNotice && <div className="purchases-notice" role="status">{purchasesNotice}</div>}
-            {metrics && (
-              <div className="metrics-grid" aria-label="Safety counters">
-                <div><strong>{metrics.purchases}</strong><span>purchases</span></div>
-                <div><strong>{metrics.decisions}</strong><span>decisions</span></div>
-                <div><strong>{metrics.runs}</strong><span>runs</span></div>
-                <div><strong>{metrics.hardCapViolations}</strong><span>cap violations</span></div>
-                <div><strong>{metrics.duplicateBuys}</strong><span>duplicate buys</span></div>
-              </div>
-            )}
-            {purchases.length === 0 ? (
+            <div className="purchase-count" aria-label="Purchase count"><strong>{purchases.length + mockPurchases.length}</strong><span>Purchases</span></div>
+            {purchases.length === 0 && mockPurchases.length === 0 ? (
               <div className="purchases-empty">No purchases found.</div>
             ) : (
               <div className="purchases-list">
+                {mockPurchases.map(purchase => <MockPurchaseCard key={purchase.id} purchase={purchase} />)}
                 {purchases.map(receipt => (
                   <ReceiptCard key={receipt.id} receipt={receipt} tracking />
                 ))}
@@ -966,15 +1038,7 @@ export function DealHunterConsole() {
           </div>
         ) : (
           <>
-            {!isSidebarOpen && (
-              <button className="floating-toggle-btn" onClick={toggleSidebar} aria-label="Expand sidebar">
-                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
-                  <line x1="9" y1="3" x2="9" y2="21"></line>
-                </svg>
-              </button>
-            )}
-            <div className="chat-messages">
+            <div className="chat-messages" ref={chatMessagesRef}>
               {messages.length === 0 ? (
             <div className="empty-chat-welcome">
               <AnimatePresence mode="wait">
@@ -1004,7 +1068,7 @@ export function DealHunterConsole() {
                     <button
                       key={`${option.label}-${option.value}`}
                       type="button"
-                      onClick={() => void sendUserMessage(option.value)}
+                      onClick={() => void sendUserMessage(option.value, option.label)}
                       disabled={isSending}
                     >
                       {option.label}
@@ -1039,7 +1103,7 @@ export function DealHunterConsole() {
                   </motion.div>
                 )}
               </AnimatePresence>
-              <div ref={messagesEndRef} />
+              <div aria-hidden="true" />
             </>
           )}
         </div>
@@ -1174,25 +1238,6 @@ export function DealHunterConsole() {
               />
 
               <button
-                type="button"
-                className={`voice-btn has-tooltip ${isRecording ? 'recording' : ''}`}
-                onClick={toggleRecording}
-                disabled={voice.state === 'connecting'}
-                aria-label={isRecording ? 'End the voice conversation' : 'Start a voice conversation'}
-                data-tooltip={voice.state === 'connecting' ? 'Connecting…' : isRecording ? 'End voice chat' : 'Talk to the advisor'}
-              >
-                {isRecording ? (
-                  <AudioLinesIcon ref={micIconRef} size={18} color="currentColor" />
-                ) : (
-                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"></path>
-                    <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
-                    <line x1="12" y1="19" x2="12" y2="22"></line>
-                  </svg>
-                )}
-              </button>
-
-              <button
                 type="submit"
                 className="send-btn has-tooltip"
                 aria-label="Send message"
@@ -1209,17 +1254,24 @@ export function DealHunterConsole() {
       </main>
       <AnimatePresence>
         {selectedOffer && (
-          <motion.div className="pay-overlay" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setSelectedOffer(null)}>
+          <motion.div className="pay-overlay" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => { if (mockPaymentStage === 'idle' || mockPaymentComplete) setSelectedOffer(null); }}>
             <motion.div className="apple-pay-sheet" initial={{ y: 32, scale: .97 }} animate={{ y: 0, scale: 1 }} exit={{ y: 24, scale: .98 }} onClick={(event) => event.stopPropagation()}>
               <div className="pay-sheet-grabber" />
-              <div className="pay-sheet-title"><strong><span className="apple-mark"></span> Pay</strong><button onClick={() => setSelectedOffer(null)} aria-label="Close">×</button></div>
-              {mockPaymentComplete ? <div className="mock-payment-success"><span>✓</span><h3>Payment approved</h3><p>{selectedOffer.name}</p><strong>{selectedOffer.price}</strong><button className="apple-pay-confirm" onClick={() => setSelectedOffer(null)}>Done</button><small>Mock payment · no charge was made</small></div> : <>
-                <div className="pay-product"><img src={selectedOffer.imageUrl ?? '/images/guitar-starter-kit.png'} alt="" /><div><strong>{selectedOffer.name}</strong><span>{selectedOffer.seller} · {selectedOffer.deliveryEstimate ?? 'delivery to confirm'}</span></div><b>{selectedOffer.price}</b></div>
+              <div className="pay-sheet-title"><strong><span className="apple-mark"></span> Pay</strong><button onClick={() => setSelectedOffer(null)} disabled={mockPaymentStage !== 'idle' && !mockPaymentComplete} aria-label="Close">×</button></div>
+              {mockPaymentComplete ? <div className="mock-payment-success"><span>✓</span><h3>Payment approved</h3><p>{selectedOffer.name}</p><strong>{selectedOffer.price}</strong><button className="apple-pay-confirm" onClick={() => { setSelectedOffer(null); setActiveSidebarTab('purchases'); }}>View in Purchases</button><button className="mock-done-btn" onClick={() => setSelectedOffer(null)}>Done</button><small>Payment completed successfully</small></div> : <>
+                <div className="pay-product"><ProductImage src={selectedOffer.imageUrl} alt={selectedOffer.name} /><div><strong>{selectedOffer.name}</strong><span>{selectedOffer.seller} · {selectedOffer.deliveryEstimate ?? 'delivery to confirm'}</span></div><b>{selectedOffer.price}</b></div>
                 <div className="pay-row"><span>Card</span><strong>Visa ···· 4242</strong></div>
                 <div className="pay-row"><span>Ship to</span><strong>Alex Carter · Warsaw</strong></div>
                 <div className="pay-total"><span>Total</span><strong>{selectedOffer.price}</strong></div>
-                <button className="apple-pay-confirm" onClick={() => setMockPaymentComplete(true)}><span className="apple-mark"></span> Pay · mockup</button>
-                <small className="pay-secure">Presentation mockup · your card will not be charged.</small>
+                <button className={`apple-pay-confirm ${mockPaymentStage !== 'idle' ? 'is-processing' : ''}`} onClick={() => void processMockPayment(selectedOffer)} disabled={mockPaymentStage !== 'idle'}>
+                  {mockPaymentStage === 'idle' ? <><span className="apple-mark"></span> Pay</> : mockPaymentStage === 'approved' ? <><span className="payment-approved-icon">✓</span> Approved</> : <><LoaderCircleIcon size={19} duration={.8} />{mockPaymentStage === 'authorizing' ? 'Authorizing payment…' : 'Confirming delivery details…'}</>}
+                </button>
+                {mockPaymentStage === 'idle' ? <small className="pay-secure">Confirm with Face ID or passcode</small> : (
+                  <div className="payment-progress" aria-live="polite">
+                    <span className="payment-progress-track"><i className={`payment-progress-fill stage-${mockPaymentStage}`} /></span>
+                    <small>{mockPaymentStage === 'authorizing' ? 'Securely contacting your bank' : mockPaymentStage === 'delivery' ? 'Preparing your order and delivery' : 'Payment confirmed'}</small>
+                  </div>
+                )}
               </>}
             </motion.div>
           </motion.div>
@@ -1229,7 +1281,7 @@ export function DealHunterConsole() {
             <motion.div className="apple-pay-sheet" initial={{ y: 32, scale: .97 }} animate={{ y: 0, scale: 1 }} exit={{ y: 24, scale: .98 }} onClick={(event) => event.stopPropagation()}>
               <div className="pay-sheet-grabber" />
               <div className="pay-sheet-title"><strong><span className="apple-mark"></span> Pay</strong><button onClick={() => setPendingCheckout(null)} aria-label="Close">×</button></div>
-              <div className="pay-product"><img src="/images/guitar-starter-kit.png" alt="Electric guitar starter set" /><div><strong>Electric guitar starter set</strong><span>Allegro · arrives tomorrow</span></div><b>{formatMoney(pendingCheckout.decision.cost.total)}</b></div>
+              <div className="pay-product"><ProductImage src={null} alt="Selected product" /><div><strong>Selected product</strong><span>Delivery details shown after payment</span></div><b>{formatMoney(pendingCheckout.decision.cost.total)}</b></div>
               <div className="pay-row"><span>Card</span><strong>Visa ···· 4242</strong></div>
               <div className="pay-row"><span>Ship to</span><strong>Alex Carter · Warsaw</strong></div>
               <div className="pay-total"><span>Total</span><strong>{formatMoney(pendingCheckout.decision.cost.total)}</strong></div>

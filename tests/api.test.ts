@@ -5,7 +5,15 @@ import { buildApp } from "../apps/api/src/app.js";
 import { loadConfig } from "../apps/api/src/config.js";
 import { FixtureMandateCompiler } from "../apps/api/src/services/mandate-compiler.js";
 import type { OfferScraper } from "../apps/api/src/services/offer-scraper.js";
-import { hasExplicitBudget, hasExplicitTiming } from "../apps/api/src/services/product-interviewer.js";
+import {
+  asksBudgetQuestion,
+  hasBudgetDecision,
+  hasContextualAccessoryDecision,
+  hasContextualConditionDecision,
+  hasExplicitBudget,
+  hasExplicitTiming,
+  requiresConditionChoice,
+} from "../apps/api/src/services/product-interviewer.js";
 
 const brief = "Nike Dunk Low, size 43, new, no resellers, maximum 80 EUR with delivery, auto-buy on low stock";
 
@@ -82,6 +90,49 @@ describe("Deal Hunter API", () => {
     expect(hasExplicitTiming("BUY_NOW")).toBe(true);
   });
 
+  it("understands short bubble answers from their conversational context", () => {
+    const messages = [
+      { role: "user" as const, content: "hi i want to buy a guitar" },
+      { role: "assistant" as const, content: "What type of guitar do you want?" },
+      { role: "user" as const, content: "acoustic" },
+      { role: "assistant" as const, content: "Do you need just the guitar, or a practical starter bundle with essentials?" },
+      { role: "user" as const, content: "Just the guitar" },
+      { role: "assistant" as const, content: "Would you prefer a new or used acoustic guitar?" },
+      { role: "user" as const, content: "new" },
+      { role: "assistant" as const, content: "How much do you want to spend?" },
+      { role: "user" as const, content: "300" },
+      { role: "assistant" as const, content: "Should I prioritize buying now, or wait for the right price?" },
+      { role: "user" as const, content: "BUY_NOW" },
+    ];
+    expect(hasContextualAccessoryDecision(messages)).toBe(true);
+    expect(hasContextualConditionDecision(messages)).toBe(true);
+    expect(hasBudgetDecision(messages)).toBe(true);
+    expect(hasExplicitTiming(messages.at(-1)?.content ?? "")).toBe(true);
+
+    expect(hasContextualConditionDecision([
+      { role: "assistant", content: "Would you consider a used acoustic guitar?" },
+      { role: "user", content: "NEW_CONDITION" },
+    ])).toBe(true);
+
+    expect(hasBudgetDecision([
+      { role: "assistant", content: "How much do you want to spend?" },
+      { role: "user", content: "UP_TO_1000_PLN" },
+    ])).toBe(true);
+    expect(hasBudgetDecision([
+      { role: "assistant", content: "What is your all-in limit?" },
+      { role: "user", content: "1900" },
+    ])).toBe(true);
+    expect(asksBudgetQuestion("How much do you want to spend?", [{ label: "1,000 PLN", value: "1000 PLN" }])).toBe(true);
+    expect(asksBudgetQuestion("Would you like to buy now or wait for the right price?")).toBe(false);
+  });
+
+  it("does not ask for used condition on hygiene products", () => {
+    expect(requiresConditionChoice("I want to buy an electric toothbrush")).toBe(false);
+    expect(requiresConditionChoice("Szukam szczoteczki do zębów")).toBe(false);
+    expect(requiresConditionChoice("I want to buy an acoustic guitar")).toBe(true);
+    expect(requiresConditionChoice("I need a used laptop")).toBe(true);
+  });
+
   it("continues the interview without fabricating a plan after an arbitrary number of turns", async () => {
     const messages = [{ role: "user", content: "Szukam produktu do nowego hobby" }];
     for (let index = 0; index < 4; index += 1) {
@@ -91,12 +142,6 @@ describe("Deal Hunter API", () => {
     const response = await app.inject({ method: "POST", url: "/api/interviews/respond", payload: { messages } });
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({ status: "QUESTION", maxQuestions: null, plan: null });
-  });
-
-  it("keeps the realtime API key server-side and reports missing configuration", async () => {
-    const response = await app.inject({ method: "POST", url: "/api/realtime/token" });
-    expect(response.statusCode).toBe(503);
-    expect(response.json().error.code).toBe("VOICE_NOT_CONFIGURED");
   });
 
   it("keeps live offer scraping disabled unless explicitly configured", async () => {

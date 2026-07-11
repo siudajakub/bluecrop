@@ -1,4 +1,6 @@
 import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
+import { resolve } from "node:path";
 import type {
   Currency,
   ProductRecommendation,
@@ -27,14 +29,22 @@ export class CatalogAndWebProductSearcher implements ProductSearcher {
 
   async search(input: ProductSearchRequest): Promise<Omit<ProductSearchResponse, "searcher">> {
     const catalog = await loadCatalog();
-    const local = rankCatalog(catalog, input).slice(0, 4);
-    const webResult = await this.webSearcher.search(input).catch(() => ({
-      recommendations: [] as ProductRecommendation[],
-      searchedCategories: input.plan.categories.map((category) => category.name),
-    }));
-    const merged = dedupe([...local, ...webResult.recommendations]);
+    const local = rankCatalog(catalog, input);
+    const webResult = await searchWebUntilUsable(this.webSearcher, input);
+    const intent = buildIntent(input);
+    const merged = dedupe([...local, ...webResult.recommendations])
+      .filter(item => isProductNameEligible(normalize(`${item.category} ${item.name}`), intent))
+      .map(item => normalizeRecommendationPrice(item, input.baseCurrency))
+      .filter((item): item is ProductRecommendation => item !== null);
     const budget = extractBudget(input);
-    const recommendations = (budget === null ? merged : merged.filter((item) => isWithinBudget(item.price, budget, input.baseCurrency))).slice(0, 8);
+    const recommendations = (budget === null ? merged : merged.filter((item) => isWithinBudget(item, budget, input.baseCurrency))).slice(0, 12);
+    const webSourcesChecked = Math.max(webResult.searchActivity?.webSourcesChecked ?? 0, webResult.recommendations.length);
+    const sourceLabels = [...new Set([
+      "product_offers.json",
+      "scraper snapshot",
+      "OpenAI web search",
+      ...(webResult.searchActivity?.sources ?? []),
+    ])];
 
     return {
       recommendations,
@@ -43,26 +53,93 @@ export class CatalogAndWebProductSearcher implements ProductSearcher {
         catalogOffersScanned: catalog.length,
         catalogMatches: local.length,
         webMatches: webResult.recommendations.length,
-        sources: ["product_offers.json", "scraper snapshot", "OpenAI web search"],
+        sources: sourceLabels,
         rejectedAsIrrelevant: Math.max(0, catalog.length - local.length),
         withinBudgetMatches: recommendations.length,
+        recordsChecked: catalog.length + webSourcesChecked,
+        webSourcesChecked,
+        sourceCount: 2 + webSourcesChecked,
       },
     };
   }
 }
 
+async function searchWebUntilUsable(webSearcher: ProductSearcher, input: ProductSearchRequest) {
+  const recommendations: ProductRecommendation[] = [];
+  const searchedCategories = new Set<string>();
+  const sources = new Set<string>();
+  let webSourcesChecked = 0;
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const result = await webSearcher.search(input);
+      recommendations.push(...result.recommendations);
+      result.searchedCategories.forEach(category => searchedCategories.add(category));
+      result.searchActivity?.sources.forEach(source => sources.add(source));
+      webSourcesChecked += Math.max(
+        result.searchActivity?.webSourcesChecked ?? 0,
+        result.recommendations.length,
+      );
+
+      // A raw web result is not enough: it must still survive product, exact-price,
+      // currency and approved all-in budget validation. Retry when it does not.
+      const usableOffers = countUsableWebOffers(recommendations, input);
+      if (extractBudget(input) === null ? usableOffers > 0 : usableOffers >= 3) break;
+    } catch {
+      // Web search and page enrichment are transient; keep any earlier valid pass.
+    }
+  }
+
+  const uniqueRecommendations = dedupe(recommendations);
+  return {
+    recommendations: uniqueRecommendations,
+    searchedCategories: searchedCategories.size
+      ? [...searchedCategories]
+      : input.plan.categories.map((category) => category.name),
+    searchActivity: {
+      catalogOffersScanned: 0,
+      catalogMatches: 0,
+      webMatches: uniqueRecommendations.length,
+      sources: [...sources],
+      rejectedAsIrrelevant: 0,
+      withinBudgetMatches: countUsableWebOffers(uniqueRecommendations, input),
+      recordsChecked: webSourcesChecked,
+      webSourcesChecked,
+      sourceCount: webSourcesChecked,
+    },
+  };
+}
+
+function countUsableWebOffers(items: ProductRecommendation[], input: ProductSearchRequest): number {
+  const intent = buildIntent(input);
+  const budget = extractBudget(input);
+  return dedupe(items)
+    .filter(item => isProductNameEligible(normalize(`${item.category} ${item.name}`), intent))
+    .map(item => normalizeRecommendationPrice(item, input.baseCurrency))
+    .filter((item): item is ProductRecommendation => item !== null)
+    .filter(item => budget === null || isWithinBudget(item, budget, input.baseCurrency))
+    .length;
+}
+
 async function loadCatalog(): Promise<CatalogOffer[]> {
-  const raw = await readFile("product_offers.json", "utf8");
-  return JSON.parse(raw) as CatalogOffer[];
+  const candidates = [...new Set([
+    resolve(process.cwd(), "product_offers.json"),
+    fileURLToPath(new URL("../../product_offers.json", import.meta.url)),
+    fileURLToPath(new URL("../../../../product_offers.json", import.meta.url)),
+  ])];
+  let lastError: unknown;
+  for (const path of candidates) {
+    try {
+      return JSON.parse(await readFile(path, "utf8")) as CatalogOffer[];
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("product_offers.json could not be loaded");
 }
 
 function rankCatalog(offers: CatalogOffer[], input: ProductSearchRequest): ProductRecommendation[] {
-  const intent = normalize([
-    input.plan.goal,
-    input.plan.summary,
-    ...input.plan.categories.flatMap((category) => [category.name, category.query]),
-    ...input.plan.parameters.map((parameter) => parameter.value),
-  ].join(" "));
+  const intent = buildIntent(input);
   const tokens = new Set(intent.split(/\s+/).filter((token) => token.length >= 3));
   const wantedCategories = new Set(input.plan.categories.flatMap((category) => categoryAliases(normalize(`${category.name} ${category.query}`))));
 
@@ -81,7 +158,7 @@ function rankCatalog(offers: CatalogOffer[], input: ProductSearchRequest): Produ
     .map(({ offer }) => ({
       name: offer.productName,
       category: offer.category ?? "Produkt",
-      price: new Intl.NumberFormat("en", { style: "currency", currency: input.baseCurrency }).format(convertCurrency(offer.price, offer.currency, input.baseCurrency)),
+      price: formatPrice(convertCurrency(offer.price + (offer.deliveryPrice ?? 0), offer.currency, input.baseCurrency), input.baseCurrency),
       seller: offer.store,
       url: offer.url,
       imageUrl: normalizeImageUrl(offer.imgUrl),
@@ -101,14 +178,28 @@ function convertCurrency(amount: number, from: Currency, to: Currency): number {
 }
 
 function isProductEligible(offer: CatalogOffer, intent: string): boolean {
-  const name = normalize(offer.productName);
+  return isProductNameEligible(normalize(offer.productName), intent);
+}
+
+function isProductNameEligible(name: string, intent: string): boolean {
   if (/gitar|guitar/.test(intent)) {
     if (!/gitar|guitar/.test(name)) return false;
     if (/t-shirt|shirt|jumper|charm|brooch|toy|book|holder|koszul|zabaw|ksiaz|brosz|zawieszk/.test(name)) return false;
     if (/elektr|electric/.test(intent) && !/elektr|electric/.test(name)) return false;
     if (/akust|acoustic/.test(intent) && !/akust|acoustic/.test(name)) return false;
+    const accessory = name.match(/strap|strings?|picks?|capo|tuner|cases?|bags?|stands?|cables?|amplifier|\bamp\b|pedal|pickup|hanger|pasek|strun|kostk|pokrow|stojak|wzmacniacz|kabel/);
+    if (accessory && !intent.includes(accessory[0] ?? "")) return false;
   }
   return true;
+}
+
+function buildIntent(input: ProductSearchRequest): string {
+  return normalize([
+    input.plan.goal,
+    input.plan.summary,
+    ...input.plan.categories.flatMap((category) => [category.name, category.query]),
+    ...input.plan.parameters.map((parameter) => parameter.value),
+  ].join(" "));
 }
 
 function categoryAliases(value: string): string[] {
@@ -144,21 +235,61 @@ function dedupe(items: ProductRecommendation[]): ProductRecommendation[] {
   });
 }
 
-function extractBudget(input: ProductSearchRequest): number | null {
-  const text = `${input.plan.summary} ${input.plan.parameters.map((item) => item.value).join(" ")}`;
+export function extractBudget(input: ProductSearchRequest): number | null {
+  if (input.maxTotal) {
+    return convertCurrency(input.maxTotal.amountMinor / 100, input.maxTotal.currency, input.baseCurrency);
+  }
   const code = input.baseCurrency.toLocaleLowerCase();
-  const after = text.match(new RegExp(`(?:${code}|zł|€|\\$|£)\\s*([\\d ,.]+)`, "i"))?.[1];
-  const before = text.match(new RegExp(`([\\d ,.]+)\\s*(?:${code}|zł|€|\\$|£)`, "i"))?.[1];
-  return parseNumericAmount(after ?? before ?? "");
+  const budgetParameters = input.plan.parameters.filter(item => /budget|spend|price|cost|maximum|max.*total|limit/i.test(item.name));
+  const candidates = [...budgetParameters.map(item => item.value), input.plan.summary];
+  for (const text of candidates) {
+    const after = text.match(new RegExp(`(?:${code}|zł|€|\\$|£)\\s*(\\d[\\d ,.]*\\d|\\d)`, "i"))?.[1];
+    const before = text.match(new RegExp(`(\\d[\\d ,.]*\\d|\\d)\\s*(?:${code}|zł|€|\\$|£)`, "i"))?.[1];
+    const amount = parseNumericAmount(after ?? before ?? "");
+    if (amount !== null && amount > 0) return amount;
+    if (budgetParameters.some(parameter => parameter.value === text)) {
+      const bareAmount = parseNumericAmount(text);
+      if (bareAmount !== null && bareAmount > 0) return bareAmount;
+    }
+  }
+  return null;
 }
 
-function isWithinBudget(price: string, budget: number, currency: Currency): boolean {
-  const symbols: Record<Currency, RegExp> = {
-    PLN: /PLN|zł/i, EUR: /EUR|€/i, USD: /USD|\$/i, GBP: /GBP|£/i,
-  };
-  if (!symbols[currency].test(price)) return true;
-  const amount = parseNumericAmount(price.replace(symbols[currency], ""));
-  return amount === null || amount <= budget;
+function isWithinBudget(item: ProductRecommendation, budget: number, currency: Currency): boolean {
+  const parsed = parsePrice(item.price);
+  if (!parsed) return false;
+  const amount = convertCurrency(parsed.amount, parsed.currency, currency);
+  const deliveryNeedsConfirmation = item.tradeoffs.some(tradeoff => /delivery|shipping/i.test(tradeoff) && /confirm|unknown|not included|checkout/i.test(tradeoff));
+  const effectiveLimit = deliveryNeedsConfirmation ? budget * 0.9 : budget;
+  return amount <= effectiveLimit;
+}
+
+function normalizeRecommendationPrice(item: ProductRecommendation, targetCurrency: Currency): ProductRecommendation | null {
+  const parsed = parsePrice(item.price);
+  if (!parsed) return null;
+  const converted = convertCurrency(parsed.amount, parsed.currency, targetCurrency);
+  return { ...item, price: formatPrice(converted, targetCurrency) };
+}
+
+export function parsePrice(price: string): { amount: number; currency: Currency } | null {
+  if (/\bfrom\b|\bstarting at\b|\bod\b|[-–—]\s*\d/i.test(price)) return null;
+  const currencies: Array<{ currency: Currency; pattern: RegExp }> = [
+    { currency: "PLN", pattern: /PLN|zł/i },
+    { currency: "EUR", pattern: /EUR|€/i },
+    { currency: "USD", pattern: /USD|US\$|\$/i },
+    { currency: "GBP", pattern: /GBP|£/i },
+  ];
+  const detected = currencies.find(({ pattern }) => pattern.test(price));
+  if (!detected) return null;
+  const withoutCurrency = price.replace(detected.pattern, " ");
+  const numberGroups = withoutCurrency.match(/\d[\d\s.,]*/g)?.map(value => value.trim()).filter(Boolean) ?? [];
+  if (numberGroups.length !== 1) return null;
+  const amount = parseNumericAmount(numberGroups[0] ?? "");
+  return amount !== null && amount >= 0 ? { amount, currency: detected.currency } : null;
+}
+
+function formatPrice(amount: number, currency: Currency): string {
+  return new Intl.NumberFormat("en", { style: "currency", currency, maximumFractionDigits: 2 }).format(amount);
 }
 
 function parseNumericAmount(value: string): number | null {

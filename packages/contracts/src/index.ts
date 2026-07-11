@@ -105,15 +105,9 @@ export const InterviewResponseSchema = z.object({
   brief: z.string().min(8).nullable(),
   plan: PurchasePlanSchema.nullable(),
   interviewer: z.enum(["openai", "fixture"]),
+  chatTitle: z.string().min(2).max(48).nullable().optional(),
 });
 export type InterviewResponse = z.infer<typeof InterviewResponseSchema>;
-
-export const RealtimeTokenResponseSchema = z.object({
-  value: z.string().min(1),
-  expiresAt: z.number().optional(),
-  model: z.string().min(1),
-});
-export type RealtimeTokenResponse = z.infer<typeof RealtimeTokenResponseSchema>;
 
 export const ProductRecommendationSchema = z.object({
   name: z.string().min(1),
@@ -122,8 +116,8 @@ export const ProductRecommendationSchema = z.object({
   seller: z.string().min(1),
   url: z.string().regex(/^https?:\/\//),
   imageUrl: z.string().regex(/^https?:\/\//).nullable(),
-  whyItFits: z.string().min(1),
-  tradeoffs: z.array(z.string()),
+  whyItFits: z.string().min(1).max(180),
+  tradeoffs: z.array(z.string().min(1).max(120)),
   deliveryEstimate: z.string().min(1).nullable().optional(),
 });
 export type ProductRecommendation = z.infer<typeof ProductRecommendationSchema>;
@@ -132,11 +126,13 @@ export const ProductSearchRequestSchema = z.object({
   plan: PurchasePlanSchema,
   destinationCountry: z.string().length(2).default("PL"),
   baseCurrency: CurrencySchema.default("PLN"),
+  /** Approved structural all-in cap. Always wins over amounts mentioned in generated plan text. */
+  maxTotal: MoneySchema.optional(),
 });
 export type ProductSearchRequest = z.infer<typeof ProductSearchRequestSchema>;
 
 export const ProductSearchResponseSchema = z.object({
-  recommendations: z.array(ProductRecommendationSchema).min(1).max(8),
+  recommendations: z.array(ProductRecommendationSchema).max(12),
   searchedCategories: z.array(z.string()).min(1),
   searcher: z.enum(["openai", "fixture"]),
   searchActivity: z.object({
@@ -146,6 +142,9 @@ export const ProductSearchResponseSchema = z.object({
     sources: z.array(z.string().min(1)),
     rejectedAsIrrelevant: z.number().int().nonnegative(),
     withinBudgetMatches: z.number().int().nonnegative().optional(),
+    recordsChecked: z.number().int().nonnegative().optional(),
+    webSourcesChecked: z.number().int().nonnegative().optional(),
+    sourceCount: z.number().int().nonnegative().optional(),
   }).optional(),
 });
 export type ProductSearchResponse = z.infer<typeof ProductSearchResponseSchema>;

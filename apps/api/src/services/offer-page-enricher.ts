@@ -93,8 +93,6 @@ export function extractPageImage(html: string, pageUrl: string): string | null {
 }
 
 async function readLimitedText(response: Response, maxBytes: number): Promise<string> {
-  const declared = Number(response.headers.get("content-length") ?? 0);
-  if (declared > maxBytes) throw new Error(`Page exceeds ${maxBytes} bytes`);
   if (!response.body) return "";
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
@@ -102,11 +100,14 @@ async function readLimitedText(response: Response, maxBytes: number): Promise<st
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
-    total += value.byteLength;
-    if (total > maxBytes) {
+    const remaining = maxBytes - total;
+    if (value.byteLength > remaining) {
+      if (remaining > 0) chunks.push(value.slice(0, remaining));
+      total = maxBytes;
       await reader.cancel();
-      throw new Error(`Page exceeds ${maxBytes} bytes`);
+      break;
     }
+    total += value.byteLength;
     chunks.push(value);
   }
   const bytes = new Uint8Array(total);

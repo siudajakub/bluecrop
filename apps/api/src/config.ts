@@ -7,7 +7,6 @@ export type AppConfig = {
   compilerMode: "fixture" | "openai";
   openAIApiKey?: string;
   openAIModel: string;
-  openAIRealtimeModel: string;
   offerEnrichmentMode: "disabled" | "html";
   offerEnrichmentAllowedHosts: string[];
   offerEnrichmentMaxHtmlBytes: number;
@@ -28,7 +27,6 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     webOrigin: env.WEB_ORIGIN ?? "http://localhost:3000",
     compilerMode,
     openAIModel: env.OPENAI_MODEL ?? "gpt-5.6-luna",
-    openAIRealtimeModel: env.OPENAI_REALTIME_MODEL ?? "gpt-realtime-2.1",
     offerEnrichmentMode: env.OFFER_ENRICHMENT_MODE === "disabled" ? "disabled" : "html",
     offerEnrichmentAllowedHosts: (env.OFFER_ENRICHMENT_ALLOWED_HOSTS ?? "")
       .split(",").map((host) => host.trim().toLowerCase()).filter(Boolean),

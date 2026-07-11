@@ -23,8 +23,6 @@ import { loadScenario } from "./scenarios.js";
 import type { MandateCompiler } from "./services/mandate-compiler.js";
 import {
   FixtureProductInterviewer,
-  VOICE_FINALIZE_TOOL,
-  VOICE_INTERVIEW_INSTRUCTIONS,
   type ProductInterviewer,
 } from "./services/product-interviewer.js";
 import { FixtureProductSearcher, type ProductSearcher } from "./services/product-searcher.js";
@@ -110,37 +108,6 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     const input = ProductSearchRequestSchema.parse(request.body);
     const result = await searcher.search(input);
     return { ...result, searcher: searcher.kind };
-  });
-
-  app.post("/api/realtime/token", async () => {
-    if (!options.config.openAIApiKey) {
-      throw new ApiError(503, "VOICE_NOT_CONFIGURED", "Rozmowa głosowa wymaga OPENAI_API_KEY na backendzie.");
-    }
-    const response = await fetch("https://api.openai.com/v1/realtime/client_secrets", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${options.config.openAIApiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        session: {
-          type: "realtime",
-          model: options.config.openAIRealtimeModel,
-          instructions: VOICE_INTERVIEW_INSTRUCTIONS,
-          tools: [VOICE_FINALIZE_TOOL],
-          tool_choice: "auto",
-          audio: {
-            input: { transcription: { model: "gpt-4o-mini-transcribe", language: "pl" } },
-            output: { voice: "marin" },
-          },
-        },
-      }),
-    });
-    const data = await response.json() as { value?: string; expires_at?: number; error?: { message?: string } };
-    if (!response.ok || !data.value) {
-      throw new ApiError(503, "VOICE_SESSION_FAILED", data.error?.message ?? "Nie udało się rozpocząć rozmowy głosowej.");
-    }
-    return { value: data.value, expiresAt: data.expires_at, model: options.config.openAIRealtimeModel };
   });
 
   app.post("/api/offers/scrape", async (request) => {

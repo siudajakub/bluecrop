@@ -3,7 +3,7 @@ import type { Mandate } from "../packages/contracts/src/index.js";
 import { calculateTotalCost, evaluateOffer } from "../packages/domain/src/index.js";
 import { loadScenario } from "../apps/api/src/scenarios.js";
 import { extractExplicitBudget, unresolvedBlockingAmbiguities } from "../apps/api/src/services/mandate-compiler.js";
-import { extractOpenGraphImage, isDirectProductUrl } from "../apps/api/src/services/product-searcher.js";
+import { extractOpenGraphImage, isDirectProductUrl, selectPreferredProductImage } from "../apps/api/src/services/product-searcher.js";
 import { extractPageImage, SafeHtmlOfferPageEnricher } from "../apps/api/src/services/offer-page-enricher.js";
 
 const mandate: Mandate = {
@@ -170,12 +170,39 @@ describe("AI purchase flow safeguards", () => {
     )).toBe("https://cdn.example.com/guitar.webp");
   });
 
+  it("prefers the exact scraped product-page image over a search thumbnail", () => {
+    expect(selectPreferredProductImage(
+      "https://shop.example.com/images/exact-acoustic-guitar.jpg",
+      "https://search.example.com/images/generic-electric-guitar.jpg",
+    )).toBe("https://shop.example.com/images/exact-acoustic-guitar.jpg");
+    expect(selectPreferredProductImage(null, "https://search.example.com/images/product.jpg"))
+      .toBe("https://search.example.com/images/product.jpg");
+  });
+
   it("extracts a public page image regardless of metadata attribute order", () => {
     expect(extractPageImage(
       '<meta content="/photos/guitar.jpg?size=large&amp;crop=1" property="og:image">',
       "https://shop.example.com/products/guitar",
     )).toBe("https://shop.example.com/photos/guitar.jpg?size=large&crop=1");
     expect(extractPageImage('<meta property="og:image" content="http://127.0.0.1/private.jpg">', "https://shop.example.com")).toBeNull();
+  });
+
+  it("extracts metadata when a shop ignores the range request and serves a large page", async () => {
+    const html = '<head><meta property="og:image" content="/photos/exact-product.jpg"></head>' + "x".repeat(5_000);
+    const enricher = new SafeHtmlOfferPageEnricher({
+      allowedHosts: ["shop.example.com"],
+      maxHtmlBytes: 256,
+      resolveHost: (async () => [{ address: "203.0.113.10", family: 4 }]) as never,
+      fetcher: (async () => new Response(html, {
+        status: 200,
+        headers: { "content-type": "text/html", "content-length": String(html.length) },
+      })) as typeof fetch,
+    });
+
+    await expect(enricher.enrich("https://shop.example.com/product/1")).resolves.toEqual({
+      finalUrl: "https://shop.example.com/product/1",
+      imageUrl: "https://shop.example.com/photos/exact-product.jpg",
+    });
   });
 
   it("blocks private destinations and validates redirects before fetching them", async () => {

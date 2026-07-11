@@ -97,12 +97,8 @@ export function respondToInterview(messages: InterviewMessage[], baseCurrency: C
   });
 }
 
-export function getRealtimeToken() {
-  return request<{ value: string; expiresAt?: number; model: string }>("/api/realtime/token", { method: "POST" });
-}
-
-export async function searchProducts(plan: PurchasePlan, baseCurrency: Currency = "PLN") {
-  const body = JSON.stringify({ plan, destinationCountry: "PL", baseCurrency });
+export async function searchProducts(plan: PurchasePlan, baseCurrency: Currency = "PLN", maxTotal?: Money) {
+  const body = JSON.stringify({ plan, destinationCountry: "PL", baseCurrency, ...(maxTotal ? { maxTotal } : {}) });
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
       return await request<ProductSearchResponse>("/api/products/search", { method: "POST", body });

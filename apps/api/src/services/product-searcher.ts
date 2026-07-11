@@ -25,7 +25,7 @@ export class OpenAIProductSearcher implements ProductSearcher {
     this.client = new OpenAI({ apiKey, timeout: 45_000, maxRetries: 0 });
   }
 
-  async search(input: ProductSearchRequest, attempt = 0): Promise<Omit<ProductSearchResponse, "searcher">> {
+  async search(input: ProductSearchRequest): Promise<Omit<ProductSearchResponse, "searcher">> {
     try {
       const response = await this.client.responses.parse({
         model: this.model,
@@ -40,12 +40,18 @@ export class OpenAIProductSearcher implements ProductSearcher {
         include: ["web_search_call.results"],
         tool_choice: "required",
         instructions:
-          "Wyszukaj aktualnie dostępne produkty dla każdej wymaganej kategorii planu. " +
-          "Podawaj wyłącznie realne produkty znalezione w sieci, z bezpośrednim URL-em źródła/oferty. " +
-          "Porównaj je z wymaganymi i preferowanymi parametrami. Nie wymyślaj cen, sprzedawców ani URL-i. " +
-          "Jeśli źródło podaje termin dostawy, zwróć go w deliveryEstimate; w przeciwnym razie ustaw null. " +
-          `Wszystkie prezentowane ceny przelicz i podaj w walucie użytkownika: ${input.baseCurrency}. Zachowaj uczciwość przy przybliżonym kursie. ` +
-          "Zwróć 3-6 najlepszych propozycji łącznie, uwzględniając konieczne kategorie uzupełniające. Odpowiadaj po polsku.",
+          "Find currently available products for every required category in the purchase plan. " +
+          "Return only real products found on live sources with a direct product or listing URL. " +
+          "Search broadly across at least three distinct retailer domains, using local-language shopping queries for the destination country. " +
+          "Prioritize retailer product pages and marketplace listings; exclude social media, video, music, forums, wikis, and editorial pages. " +
+          "Respect every required parameter. Never invent a price, seller, delivery time, image, or URL. " +
+          "The structured maxTotal field, when present, is the authoritative hard cap and overrides any older amount in plan text. " +
+          "The hard cap includes product price, delivery, fees, and taxes. Never return an offer whose known total exceeds maxTotal. " +
+          "Prefer a verified delivered total. If delivery cost is not published, use the exact listed product price only when it is comfortably below maxTotal and add 'Delivery cost needs confirmation' to tradeoffs. " +
+          `Return each price as one exact numeric amount followed by ${input.baseCurrency}; never return a range or a 'from' price. ` +
+          "If the source provides a delivery date, return it in deliveryEstimate; otherwise use null. " +
+          "whyItFits must be one polished English sentence of at most 14 words. Each tradeoff must be at most 8 words. " +
+          "Return 3-6 best offers total. Write every user-facing field in English.",
         input: JSON.stringify(input),
         text: { format: zodTextFormat(SearchResultSchema, "product_search_results") },
       });
@@ -55,17 +61,36 @@ export class OpenAIProductSearcher implements ProductSearcher {
       const imageResults = extractImageResults(response.output as unknown[]);
       const enrichedRecommendations = await Promise.all(directRecommendations.map(async (item) => ({
         ...item,
-        imageUrl: findMatchingImage(item.url, imageResults) ?? await this.enrichImage(item.url),
+        // The exact listing page is authoritative. Search-result thumbnails can
+        // be stale, generic, or associated with another variant.
+        imageUrl: selectPreferredProductImage(
+          await this.enrichImage(item.url),
+          findMatchingImage(item.url, imageResults),
+        ),
       })));
-      const recommendations = enrichedRecommendations.filter((item) => item.imageUrl !== null);
+      const recommendations = enrichedRecommendations;
       if (!recommendations.length) {
-        if (attempt < 2) return this.search(input, attempt + 1);
-        throw new ApiError(422, "NO_VERIFIED_PRODUCT_OFFERS", "Nie znaleziono dostępnych ofert z bezpośrednim linkiem i zdjęciem produktu. Spróbuj ponownie później.");
+        throw new ApiError(422, "NO_VERIFIED_PRODUCT_OFFERS", "No verified product offer with a direct link and exact price was found.");
       }
-      return { ...parsed, recommendations };
+      const webSources = extractWebSources(response.output as unknown[], recommendations.map(item => item.url));
+      return {
+        ...parsed,
+        recommendations,
+        searchActivity: {
+          catalogOffersScanned: 0,
+          catalogMatches: 0,
+          webMatches: recommendations.length,
+          sources: webSources.domains,
+          rejectedAsIrrelevant: 0,
+          withinBudgetMatches: recommendations.length,
+          recordsChecked: webSources.pageCount,
+          webSourcesChecked: webSources.pageCount,
+          sourceCount: webSources.pageCount,
+        },
+      };
     } catch (error) {
       if (error instanceof ApiError) throw error;
-      throw new ApiError(503, "PRODUCT_SEARCH_UNAVAILABLE", "Wyszukiwanie produktów jest chwilowo niedostępne.");
+      throw new ApiError(503, "PRODUCT_SEARCH_UNAVAILABLE", "Product search is temporarily unavailable.");
     }
   }
 
@@ -77,6 +102,45 @@ export class OpenAIProductSearcher implements ProductSearcher {
       return null;
     }
   }
+}
+
+function extractWebSources(output: unknown[], recommendationUrls: string[]): { domains: string[]; pageCount: number } {
+  const urls = new Set(recommendationUrls);
+  const visit = (value: unknown, depth: number) => {
+    if (depth > 7 || value === null || typeof value !== "object") return;
+    if (Array.isArray(value)) {
+      value.forEach(item => visit(item, depth + 1));
+      return;
+    }
+    for (const [key, nested] of Object.entries(value)) {
+      if ((key === "url" || key === "source_website_url") && typeof nested === "string" && /^https?:\/\//i.test(nested)) {
+        urls.add(nested);
+      } else {
+        visit(nested, depth + 1);
+      }
+    }
+  };
+  visit(output, 0);
+  const domains = new Set<string>();
+  for (const rawUrl of urls) {
+    try {
+      const domain = new URL(rawUrl).hostname.replace(/^www\./, "").toLowerCase();
+      if (!isNonShoppingSource(domain)) domains.add(domain);
+    } catch { /* ignore malformed source */ }
+  }
+  return { domains: [...domains], pageCount: urls.size };
+}
+
+function isNonShoppingSource(domain: string): boolean {
+  return [
+    "youtube.com",
+    "youtu.be",
+    "spotify.com",
+    "open.spotify.com",
+    "arxiv.org",
+    "fandom.com",
+    "reddit.com",
+  ].some(blocked => domain === blocked || domain.endsWith(`.${blocked}`));
 }
 
 export function isDirectProductUrl(rawUrl: string): boolean {
@@ -131,6 +195,10 @@ function findMatchingImage(listingUrl: string, images: WebImageResult[]): string
   const listing = comparableUrl(listingUrl);
   const match = images.find((image) => comparableUrl(image.sourceUrl) === listing);
   return match?.thumbnailUrl ?? match?.imageUrl ?? null;
+}
+
+export function selectPreferredProductImage(pageImage: string | null, matchingSearchImage: string | null): string | null {
+  return pageImage ?? matchingSearchImage;
 }
 
 export function extractOpenGraphImage(html: string, pageUrl: string): string | null {

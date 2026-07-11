@@ -20,8 +20,29 @@ export type ChatMessage =
   | { id: string; sender: 'bot'; kind: 'decision'; decision: Decision }
   | { id: string; sender: 'bot'; kind: 'receipt'; receipt: Receipt }
   | { id: string; sender: 'bot'; kind: 'searching' }
-  | { id: string; sender: 'bot'; kind: 'trace'; sources: number; categories: string[]; sourceLabels: string[]; catalogMatches: number; webMatches: number; rejected: number }
+  | { id: string; sender: 'bot'; kind: 'trace'; recordsChecked: number; matches: number; sourceCount: number; webSourcesChecked: number; categories: string[]; sourceLabels: string[] }
   | { id: string; sender: 'bot'; kind: 'recommendations'; items: ProductRecommendation[] };
+
+export interface MockPurchase {
+  id: string;
+  offer: ProductRecommendation;
+  purchasedAt: string;
+  deliveryEta: string;
+}
+
+const PRODUCT_IMAGE_PLACEHOLDER = '/images/product-placeholder.svg';
+
+export function ProductImage({ src, alt, ...props }: Omit<React.ImgHTMLAttributes<HTMLImageElement>, 'src'> & { src: string | null }) {
+  return <img
+    {...props}
+    src={src ?? PRODUCT_IMAGE_PLACEHOLDER}
+    alt={alt}
+    onError={(event) => {
+      if (event.currentTarget.src.endsWith(PRODUCT_IMAGE_PLACEHOLDER)) return;
+      event.currentTarget.src = PRODUCT_IMAGE_PLACEHOLDER;
+    }}
+  />;
+}
 
 export function formatMoney(money: Money) {
   return new Intl.NumberFormat('en', { style: 'currency', currency: money.currency }).format(money.amountMinor / 100);
@@ -43,16 +64,16 @@ export function SearchingCard() {
   return <div className="searching-card"><span className="radar"><i /></span><div><BlurText key={phrase} text={phrases[phrase] ?? phrases[0]!} className="searching-blur-text" delay={35} animateBy="words" direction="top" /><small>Scraper catalog · stores · OpenAI web search</small></div><span className="searching-dots"><i /><i /><i /></span></div>;
 }
 
-export function SearchTrace({ sources, categories, sourceLabels, catalogMatches, webMatches, rejected }: { sources: number; categories: string[]; sourceLabels: string[]; catalogMatches: number; webMatches: number; rejected: number }) {
+export function SearchTrace({ recordsChecked, matches, sourceCount, webSourcesChecked, categories, sourceLabels }: { recordsChecked: number; matches: number; sourceCount: number; webSourcesChecked: number; categories: string[]; sourceLabels: string[] }) {
   return (
     <div className="search-trace">
       <div className="trace-heading"><span className="trace-orb" /><div><strong>Search complete</strong><small>Transparent activity log · not private model reasoning</small></div></div>
-      <div className="trace-stats"><div><strong>{sources}</strong><span>offers checked</span></div><div><strong>{catalogMatches + webMatches}</strong><span>matches</span></div><div><strong>{rejected}</strong><span>filtered out</span></div></div>
+      <div className="trace-stats"><div><strong>{recordsChecked}</strong><span>records checked</span></div><div><strong>{matches}</strong><span>price matches</span></div><div><strong>{sourceCount}</strong><span>sources checked</span></div></div>
       <div className="trace-timeline">
         <div className="done"><i>✓</i><span><strong>Intent understood</strong><small>{categories.join(' · ')}</small></span></div>
-        <div className="done"><i>✓</i><span><strong>Combined {sourceLabels.length} sources</strong><small>{sourceLabels.join(' · ')}</small></span></div>
-        <div className="blocked"><i>!</i><span><strong>Irrelevant results removed</strong><small>{rejected} records did not match the product or variant</small></span></div>
-        <div className="done"><i>✓</i><span><strong>Finalists compared</strong><small>Price, delivery, variant and seller trust</small></span></div>
+        <div className="done"><i>✓</i><span><strong>Scraper catalog scanned</strong><small>product_offers.json · verified scraper snapshot</small></span></div>
+        <div className="done"><i>✓</i><span><strong>{webSourcesChecked} live web sources checked</strong><small>{sourceLabels.filter(label => !/product_offers|scraper snapshot|openai web search/i.test(label)).join(' · ') || 'OpenAI web search'}</small></span></div>
+        <div className="done"><i>✓</i><span><strong>{matches} matching offers compared</strong><small>Price, delivery, variant and seller trust</small></span></div>
       </div>
     </div>
   );
@@ -217,8 +238,8 @@ export function ReceiptCard({ receipt, tracking = false }: { receipt: Receipt; t
     <div className={`chat-card receipt ${tracking ? 'tracking-card' : ''}`}>
       {tracking && (
         <div className="purchase-hero">
-          <img src="/images/guitar-starter-kit.png" alt="Purchased guitar starter kit" />
-          <div><small>ORDER {receipt.purchaseId.toUpperCase()}</small><h3>Electric guitar starter set</h3><p>Allegro · delivery included</p></div>
+          <ProductImage src={null} alt="Purchased product" />
+          <div><small>ORDER {receipt.purchaseId.toUpperCase()}</small><h3>Purchased product</h3><p>Delivery included</p></div>
           <strong>{formatMoney(receipt.cost.total)}</strong>
         </div>
       )}
@@ -247,10 +268,7 @@ export function ReceiptCard({ receipt, tracking = false }: { receipt: Receipt; t
       <code className="receipt-key">{receipt.idempotencyKey}</code>
       {tracking && (
         <div className="tracking-panel">
-          <div className="tracking-map" aria-label="Package route from Warsaw to your location">
-            <span className="map-road road-a" /><span className="map-road road-b" />
-            <span className="route-line" /><span className="map-pin origin" /><span className="map-pin destination" />
-          </div>
+          <DeliveryJourney />
           <div className="tracking-copy"><span className="live-dot" /><div><strong>On the way</strong><p>Arrives tomorrow, 12:00–14:00</p></div><span>Warsaw → You</span></div>
           <div className="tracking-steps"><span className="done">Ordered</span><span className="done">Shipped</span><span className="active">In transit</span><span>Delivered</span></div>
         </div>
@@ -259,40 +277,67 @@ export function ReceiptCard({ receipt, tracking = false }: { receipt: Receipt; t
   );
 }
 
-export function RecommendationList({ items, onPay }: { items: ProductRecommendation[]; onPay: (item: ProductRecommendation) => void }) {
+export function RecommendationList({ items, onPay, purchasedUrls }: { items: ProductRecommendation[]; onPay: (item: ProductRecommendation) => void; purchasedUrls: Set<string> }) {
   const [activeIndex, setActiveIndex] = React.useState(0);
-  const item = items[activeIndex];
+  const purchasedItem = items.find(candidate => purchasedUrls.has(candidate.url));
+  const item = purchasedItem ?? items[activeIndex];
   if (!item) return null;
+  const purchased = Boolean(purchasedItem);
   return (
     <div className="chat-card recommendations recommendation-carousel">
       <div className="chat-card-header">
-        <span className="status-pill approved">{activeIndex === 0 ? 'TOP PICK' : 'SHORTLIST'}</span>
-        <small>{activeIndex + 1} of {items.length}</small>
+        <span className="status-pill approved">{purchased ? 'PURCHASED' : activeIndex === 0 ? 'TOP PICK' : 'SHORTLIST'}</span>
+        <small>{purchased ? 'Order confirmed' : `${activeIndex + 1} of ${items.length}`}</small>
       </div>
-      <p className="chat-card-copy">{activeIndex === 0 ? 'This is my best match for your requirements.' : 'Another verified option from your shortlist.'}</p>
+      <p className="chat-card-copy">{purchased ? 'Your selected product has been purchased successfully.' : activeIndex === 0 ? 'This is my best match for your requirements.' : 'Another verified option from your shortlist.'}</p>
       <div className="recommendation-items"><div className="recommendation-item featured" key={`${item.url}-${item.name}`}>
-            <img className="recommendation-image" src={item.imageUrl ?? '/images/guitar-starter-kit.png'} alt={item.name} />
+            <ProductImage className="recommendation-image" src={item.imageUrl} alt={item.name} />
             <div className="recommendation-item-main">
               <strong>{item.name}</strong>
               <span>{item.category} · {item.seller}</span>
-              <span className="delivery-line">◷ {item.deliveryEstimate ?? 'Termin dostawy do potwierdzenia'}</span>
+              <span className="delivery-line">◷ {item.deliveryEstimate ?? 'Delivery date to confirm'}</span>
               <p>{item.whyItFits}</p>
               {item.tradeoffs.length > 0 && <small>Check first: {item.tradeoffs.join(' · ')}</small>}
             </div>
             <div className="recommendation-item-side">
               <strong>{item.price}</strong>
               <a href={item.url} target="_blank" rel="noreferrer">View offer ↗</a>
-              <button type="button" className="result-pay-btn" onClick={() => onPay(item)}><span className="apple-mark"></span> Pay</button>
+              {purchased ? <span className="purchased-check">✓ Purchased</span> : <button type="button" className="result-pay-btn" onClick={() => onPay(item)}><span className="apple-mark"></span> Pay</button>}
             </div>
           </div>
       </div>
-      <div className="carousel-controls">
+      {purchased && <div className="purchase-handoff" role="status"><div><i>✓</i><span><strong>Payment approved</strong><small>Apple Pay completed</small></span></div><div><i>✓</i><span><strong>Delivery details shared</strong><small>Your name and shipping address were passed securely</small></span></div><div><i>✓</i><span><strong>Added to Purchases</strong><small>Tracking is now available</small></span></div></div>}
+      {!purchased && <div className="carousel-controls">
         <button type="button" onClick={() => setActiveIndex(index => (index - 1 + items.length) % items.length)} aria-label="Previous offer">←</button>
         <div>{items.map((_, index) => <button key={index} type="button" className={index === activeIndex ? 'active' : ''} onClick={() => setActiveIndex(index)} aria-label={`Show offer ${index + 1}`} />)}</div>
         <button type="button" onClick={() => setActiveIndex(index => (index + 1) % items.length)} aria-label="Next offer">→</button>
-      </div>
+      </div>}
     </div>
   );
+}
+
+export function MockPurchaseCard({ purchase }: { purchase: MockPurchase }) {
+  return <div className="chat-card tracking-card mock-purchase-card">
+    <div className="purchase-hero">
+      <ProductImage src={purchase.offer.imageUrl} alt={purchase.offer.name} />
+      <div><small>ORDER {purchase.id.toUpperCase()}</small><h3>{purchase.offer.name}</h3><p>{purchase.offer.seller} · {purchase.offer.deliveryEstimate ?? 'Delivery confirmed'}</p></div>
+      <strong>{purchase.offer.price}</strong>
+    </div>
+    <div className="mock-order-state"><span className="status-pill approved">PAID</span><a className="seller-order-link" href={purchase.offer.url} target="_blank" rel="noreferrer">View on {purchase.offer.seller} ↗</a><small>{new Date(purchase.purchasedAt).toLocaleString('en')}</small></div>
+    <div className="tracking-panel">
+      <DeliveryJourney />
+      <div className="tracking-copy"><span className="live-dot" /><div><strong>Preparing for shipment</strong><p>{purchase.deliveryEta}</p></div><span>Seller → Warsaw</span></div>
+      <div className="tracking-steps"><span className="done">Ordered</span><span className="active">Preparing</span><span>In transit</span><span>Delivered</span></div>
+    </div>
+  </div>;
+}
+
+function DeliveryJourney() {
+  return <div className="delivery-journey" aria-label="Delivery vehicle travelling from the warehouse to your home">
+    <div className="delivery-place warehouse"><span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="M3 10 12 4l9 6v10H3z"/><path d="M7 20v-6h10v6M3 10h18"/></svg></span><small>Warehouse</small></div>
+    <div className="delivery-route"><i className="road-mark one"/><i className="road-mark two"/><i className="road-mark three"/><span className="delivery-car"><svg viewBox="0 0 32 20" fill="none"><path d="M3 13V7.5c0-1.1.9-2 2-2h13l5 4h4c1.1 0 2 .9 2 2V13" fill="currentColor"/><circle cx="9" cy="14" r="3" fill="#fff" stroke="currentColor" strokeWidth="2"/><circle cx="24" cy="14" r="3" fill="#fff" stroke="currentColor" strokeWidth="2"/><path d="M18 5.5v4h5" stroke="#fff" strokeWidth="1.5"/></svg><em>In transit</em></span></div>
+    <div className="delivery-place home"><span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="m3 11 9-7 9 7"/><path d="M5 10v10h14V10M10 20v-6h4v6"/></svg></span><small>Your home</small></div>
+  </div>;
 }
 
 export function ErrorNote({ code, text, reasonCodes }: { code: string; text: string; reasonCodes: string[] }) {
