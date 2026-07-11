@@ -1,15 +1,15 @@
 # Bluecrop — Deal Hunter
 
-Deal Hunter to demonstracyjny agent zakupowy, który kompiluje brief do jawnego mandatu, ocenia
-zmieniające się oferty i wykonuje testowy zakup wyłącznie w granicach zatwierdzonej zgody.
+Deal Hunter is a demo shopping agent that compiles a brief into an explicit mandate, evaluates
+changing offers, and executes a test purchase strictly within the limits of the approved consent.
 
-Repo zawiera lokalny pion hackathonowy z testowym UI Next.js i API Fastify. Sprzedawcy i płatność
-są symulowane, ale pełny koszt, policy engine, rewalidacja, idempotencja i audit receipt działają
-w kodzie deterministycznym.
+The repo contains a local hackathon vertical with a test Next.js UI and a Fastify API. Merchants and
+payment are simulated, but the full cost calculation, policy engine, revalidation, idempotency, and
+audit receipt all run in deterministic code.
 
-## Szybki start
+## Quick start
 
-Wymagany jest Node.js 22 lub nowszy.
+Node.js 22 or newer is required.
 
 ```bash
 npm install
@@ -20,45 +20,45 @@ npm run dev
 - UI: `http://127.0.0.1:3000`
 - API: `http://127.0.0.1:3001`
 
-Sprawdzenie gotowości API:
+Check that the API is ready:
 
 ```bash
 curl http://127.0.0.1:3001/health
 ```
 
-Domyślnie działa `MANDATE_COMPILER_MODE=fixture`, więc klucz OpenAI nie jest potrzebny.
+`MANDATE_COMPILER_MODE=fixture` runs by default, so no OpenAI key is needed.
 
-## Testowe UI
+## Test UI
 
-Pojedynczy ekran prowadzi przez cały przepływ:
+A single screen walks through the whole flow:
 
-1. skompiluj brief;
-2. zatwierdź mandat;
-3. uruchom monitoring;
-4. wykonaj poprawny checkout albo najpierw podnieś cenę;
-5. sprawdź timeline, trust receipt i safety counters.
+1. compile the brief;
+2. approve the mandate;
+3. start monitoring;
+4. run a valid checkout, or first raise the price;
+5. inspect the timeline, trust receipt, and safety counters.
 
-Przycisk „Cofnij zgodę” pozwala sprawdzić drugą blokadę rewalidacji. „Reset demo” czyści stan
-backendu i interfejsu.
+The "Revoke consent" button lets you exercise the second revalidation lock. "Reset demo" clears the
+backend and interface state.
 
 ## Demo
 
-Pełny golden path można sprawdzić bez uruchamiania serwera:
+The full golden path can be checked without starting the server:
 
 ```bash
 npm run demo:smoke
 ```
 
-Oczekiwany wynik to trzy decyzje:
+The expected result is three decisions:
 
 ```text
 IGNORE → IGNORE → AUTO_BUY
 ```
 
-Pierwsza oferta przekracza limit po FX, dostawie i opłatach. Druga ma fałszywy rabat. Trzecia
-spełnia mandat, mieści się w 80 EUR i ma niski stan magazynowy.
+The first offer exceeds the cap after FX, delivery, and fees. The second has a fake discount. The
+third satisfies the mandate, fits within 80 EUR, and has low stock.
 
-Stan działającego serwera resetuje:
+Reset the state of a running server:
 
 ```bash
 npm run demo:reset
@@ -66,7 +66,7 @@ npm run demo:reset
 
 ## OpenAI
 
-Klucz pozostaje wyłącznie w backendzie. Nie dodawaj `.env` do repozytorium.
+The key stays exclusively in the backend. Do not commit `.env` to the repository.
 
 ```bash
 MANDATE_COMPILER_MODE=openai
@@ -74,20 +74,21 @@ OPENAI_API_KEY=...
 OPENAI_MODEL=gpt-5.6
 ```
 
-Adapter używa Responses API i Structured Outputs z tym samym schematem Zod, który waliduje
-kontrakt aplikacji. Model interpretuje brief, ale nie liczy kosztu ani nie autoryzuje zakupu.
+The adapter uses the Responses API and Structured Outputs with the same Zod schema that validates the
+application contract. The model interprets the brief, but it does not compute the cost or authorize
+the purchase.
 
-## Komendy
+## Commands
 
 ```bash
-npm run check       # TypeScript + walidacja dokumentów agentowych
-npm test            # testy domeny i API
-npm run build       # produkcyjne buildy API i Next.js
-npm start           # uruchomienie obu produkcyjnych aplikacji
-npm run demo:smoke  # pełny lokalny golden path
+npm run check       # TypeScript + agent document validation
+npm test            # domain and API tests
+npm run build       # production builds of the API and Next.js
+npm start           # run both production apps
+npm run demo:smoke  # full local golden path
 ```
 
-## Architektura
+## Architecture
 
 ```text
 Next.js UI
@@ -99,27 +100,27 @@ Fastify API
     └── in-memory audit receipts
 ```
 
-Najważniejsze katalogi:
+Key directories:
 
-| Ścieżka | Odpowiedzialność |
+| Path | Responsibility |
 | --- | --- |
-| `apps/api` | Fastify, endpointy, konfiguracja i adaptery |
-| `apps/web` | testowy interfejs Next.js i klient HTTP |
-| `packages/contracts` | schematy Zod oraz typy UI–backend |
-| `packages/domain` | koszt, matching, ryzyko i decyzje |
-| `packages/checkout` | rewalidacja, idempotencja i receipt |
-| `fixtures/scenarios` | odtwarzalne dane demo |
-| `tests` | testy domenowe i pełny przepływ API |
+| `apps/api` | Fastify, endpoints, configuration, and adapters |
+| `apps/web` | test Next.js interface and HTTP client |
+| `packages/contracts` | Zod schemas and UI–backend types |
+| `packages/domain` | cost, matching, risk, and decisions |
+| `packages/checkout` | revalidation, idempotency, and receipt |
+| `fixtures/scenarios` | reproducible demo data |
+| `tests` | domain tests and the full API flow |
 
-Szczegółowe przykłady request/response są w
-[kontrakcie UI–backend](docs/hackathon/contracts.md). Scenariusz prezentacji znajduje się w
-[runbooku demo](docs/hackathon/demo.md).
+Detailed request/response examples are in the
+[UI–backend contract](docs/hackathon/contracts.md). The presentation scenario is in the
+[demo runbook](docs/hackathon/demo.md).
 
-## Ograniczenia MVP
+## MVP limitations
 
-- stan znika po restarcie procesu;
-- brak prawdziwego scrapingu i płatności;
-- jedno lokalne demo, bez logowania i wielu użytkowników;
-- kontrolowane mutacje ofert istnieją wyłącznie na potrzeby prezentacji.
+- state is lost when the process restarts;
+- no real scraping or payment;
+- a single local demo, without login or multiple users;
+- controlled offer mutations exist only for the presentation.
 
-Ostatni przegląd: 2026-07-11.
+Last reviewed: 2026-07-11.

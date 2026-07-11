@@ -1,120 +1,123 @@
-# Deal Hunter — plan pracy zespołu
+# Deal Hunter — team work plan
 
-## Parametry sprintu
+## Sprint parameters
 
 - Deadline: **2026-07-11 18:00 CEST**.
-- Dostępny czas: około 5 godzin.
+- Time available: about 5 hours.
 - Frontend: Next.js + TypeScript.
-- Backend: Node.js + TypeScript; rekomendowany Fastify dla małego, jawnego API.
-- Organizacja: npm workspaces z `apps/web`, `apps/api` i `packages/contracts`.
-- Priorytet: działający golden path i niezawodna prezentacja, nie szerokość produktu.
+- Backend: Node.js + TypeScript; Fastify recommended for a small, explicit API.
+- Organization: npm workspaces with `apps/web`, `apps/api`, and `packages/contracts`.
+- Priority: a working golden path and a reliable presentation, not product breadth.
 
-## Podział odpowiedzialności
+## Responsibility split
 
-### Jakub — aplikacja poza UI
+### Jakub — everything outside the UI
 
-- wybór stacku i szkielet workspace;
-- kontrakty domenowe i walidacja danych;
-- API, persistence i orkiestracja OpenAI;
-- replay engine oraz realistyczne fixtures;
-- matching, koszt końcowy, ryzyko i policy engine;
-- rewalidacja, testowy checkout i idempotencja;
-- audit log, trust receipt, evale i komendy resetu;
-- wdrożenie API oraz tryb offline.
+- stack choice and workspace scaffold;
+- domain contracts and data validation;
+- API, persistence, and OpenAI orchestration;
+- replay engine and realistic fixtures;
+- matching, final cost, risk, and policy engine;
+- revalidation, test checkout, and idempotency;
+- audit log, trust receipt, evals, and reset commands;
+- API deployment and offline mode.
 
-### Osobny frontend owner — UI
+### Separate frontend owner — the UI
 
-- kierunek wizualny i system komponentów;
-- brief oraz edytowalny przegląd mandatu;
-- monitoring, oś czasu i widoki decyzji;
-- koszt końcowy, reason codes i ryzyko przedstawione bez ukrywania dowodów;
-- stany loading, empty, error, retry i offline fixture;
-- ekran rewalidacji, blokady oraz trust receipt;
-- responsywność, dostępność i testy głównego przepływu UI;
-- integracja wyłącznie przez `ui-api-v1`, bez kopiowania reguł domenowych.
+- visual direction and component system;
+- brief and the editable mandate review;
+- monitoring, timeline, and decision views;
+- final cost, reason codes, and risk presented without hiding evidence;
+- loading, empty, error, retry, and offline-fixture states;
+- revalidation screen, blocks, and trust receipt;
+- responsiveness, accessibility, and tests of the main UI flow;
+- integration only through `ui-api-v1`, without copying domain rules.
 
-### Wspólne
+### Shared
 
-- zamrożenie kontraktu i przykładowych payloadów;
-- pierwszy pion end-to-end;
-- contract smoke i obsługa błędów;
-- próby demo, cięcia zakresu i ostateczny build.
+- freezing the contract and example payloads;
+- the first end-to-end vertical;
+- contract smoke and error handling;
+- demo rehearsals, scope cuts, and the final build.
 
-## 13:00–13:30 — kontrakt i szkielet
+## 13:00–13:30 — contract and scaffold
 
-Jakub tworzy npm workspace, `apps/api` i `packages/contracts`. Frontend owner tworzy `apps/web` w Next.js.
-Zatwierdzamy nazwy stanów, request/response, kody błędów i trzy fixtures. Status `ui-api-v1`
-zmieniamy z `PROPOSED` na `FROZEN`. Potem pracujemy równolegle.
+Jakub creates the npm workspace, `apps/api`, and `packages/contracts`. The frontend owner creates
+`apps/web` in Next.js. We approve the state names, request/response, error codes, and the three
+fixtures. We move `ui-api-v1` from `PROPOSED` to `FROZEN`. Then we work in parallel.
 
-Warunek wyjścia: przykładowe payloady walidują się, UI może działać na fixture adapterze, a backend
-może implementować ten sam kontrakt niezależnie.
+Exit condition: the example payloads validate, the UI can run on the fixture adapter, and the backend
+can implement the same contract independently.
 
-## 13:30–15:00 — cienki pion end-to-end
+## 13:30–15:00 — thin end-to-end vertical
 
-- Jakub: jeden zapisany mandat, jeden scenariusz, jedna decyzja i prosty receipt przez API.
-- Frontend owner: brief → mandat → uruchomienie → jedna karta decyzji na fixture adapterze.
-- Wspólnie: przełączenie adaptera UI z fixture na API bez zmiany komponentów.
+- Jakub: one saved mandate, one scenario, one decision, and a simple receipt through the API.
+- Frontend owner: brief → mandate → run → one decision card on the fixture adapter.
+- Together: switch the UI adapter from fixture to API without changing components.
 
-Warunek wyjścia: jedna kompletna ścieżka działa end-to-end. Nie dokładamy kolejnych ekranów ani
-reguł, dopóki ten pion nie przejdzie contract smoke.
+Exit condition: one complete path works end-to-end. We do not add more screens or rules until this
+vertical passes contract smoke.
 
-## 15:00–16:00 — trzy scenariusze i pełny koszt
+## 15:00–16:00 — three scenarios and full cost
 
-- Jakub: replay, pełny koszt, matching, risk signals i cztery decyzje.
-- Frontend owner: oś czasu, trzy scenariusze, reason codes, stany błędów i przejrzyste wyjaśnienia.
-- Integracja najpóźniej o 15:30 i 16:00 na `hack/integration`, po jednej lane naraz.
+- Jakub: replay, full cost, matching, risk signals, and the four decisions.
+- Frontend owner: timeline, three scenarios, reason codes, error states, and clear explanations.
+- Integration at 15:30 and 16:00 at the latest, on `hack/integration`, one lane at a time.
 
-Warunek wyjścia: pułapka walutowa, fałszywy rabat i poprawna oferta z NL dają oczekiwane decyzje
-zarówno w testach, jak i w UI.
+Exit condition: the currency trap, the fake discount, and the valid NL offer produce the expected
+decisions both in tests and in the UI.
 
-## 16:00–16:30 — checkout i bezpieczeństwo
+## 16:00–16:30 — checkout and safety
 
-- Jakub: rewalidacja, cofnięta zgoda, zmiana ceny, klucz idempotencji, audit receipt i evale.
-- Frontend owner: czytelna blokada, retry tym samym kluczem, receipt i panel najważniejszych metryk.
-- Wspólnie: test podwójnego kliknięcia, timeoutu i ponowienia po odświeżeniu.
+- Jakub: revalidation, revoked consent, price change, idempotency key, audit receipt, and evals.
+- Frontend owner: a readable block, retry with the same key, receipt, and a panel of the key metrics.
+- Together: test a double click, a timeout, and a retry after a refresh.
 
-Warunek wyjścia: testy limitu i idempotencji przechodzą, a każde odrzucenie ma kod powodu i dowód
-widoczny w UI. O 16:30 następuje bezwzględny feature freeze.
+Exit condition: the cap and idempotency tests pass, and every rejection has a reason code and
+evidence visible in the UI. At 16:30 comes the absolute feature freeze.
 
-## 16:30–17:20 — integracja i demo hardening
+## 16:30–17:20 — integration and demo hardening
 
-- zamrozić funkcje i ciąć wszystko poza golden path;
-- uruchomić pełne testy na dokładnym kandydacie demo;
-- przeprowadzić dwie próby z resetem od zera;
-- sprawdzić tryb bez OpenAI i bez hostingu;
-- oznaczyć commit/tag, nagrać backup i nie aktualizować zależności po freeze.
+- freeze features and cut everything outside the golden path;
+- run the full tests on the exact demo candidate;
+- run two rehearsals with a reset from scratch;
+- check the no-OpenAI and no-hosting mode;
+- tag the commit, record a backup, and do not update dependencies after the freeze.
 
 ## 17:20–18:00 — submission buffer
 
-- nie zmieniać funkcji ani zależności;
-- poprawiać wyłącznie błędy blokujące uruchomienie lub prezentację;
-- przygotować opis, linki, screenshoty/nagranie i finalny submission;
-- o 17:45 zakończyć zmiany w kodzie, chyba że aplikacja w ogóle się nie uruchamia.
+- do not change features or dependencies;
+- fix only bugs that block startup or the presentation;
+- prepare the description, links, screenshots/recording, and the final submission;
+- at 17:45 stop code changes, unless the app does not start at all.
 
-## Kolejność integracji
+## Integration order
 
-1. Kontrakty i fixtures.
-2. Cienki API + cienki UI.
-3. Replay i trzy decyzje.
-4. Checkout, rewalidacja i receipt.
-5. Evale, polish i demo fallback.
+1. Contracts and fixtures.
+2. Thin API + thin UI.
+3. Replay and the three decisions.
+4. Checkout, revalidation, and receipt.
+5. Evals, polish, and the demo fallback.
 
-## Zasady współpracy
+## Collaboration rules
 
-- Jakub nie edytuje `apps/web/**`; frontend owner nie edytuje domeny, policy engine ani checkoutu.
-- `packages/contracts/**` ma jednego właściciela: Jakuba. Frontend owner proponuje zmiany przez przykład i
-  opis zachowania konsumenta.
-- UI zawsze ma fixture adapter zgodny z kontraktem, więc żadna strona nie czeka na gotowy backend.
-- Zmiana kontraktu wymaga adaptera kompatybilności albo wspólnej fali integracyjnej.
-- Po 15 minutach blokady właściciel zapisuje fallback i zgłasza ją integration captainowi.
-- Scraper, prawdziwe płatności i druga kategoria nie wchodzą do MVP.
-- Rozbudowany panel evali wypada z głównego UI; wystarczą 3–5 kluczowych wyników w receipt albo
-  widoku końcowym.
+- Jakub does not edit `apps/web/**`; the frontend owner does not edit the domain, policy engine, or
+  checkout.
+- `packages/contracts/**` has a single owner: Jakub. The frontend owner proposes changes via an
+  example and a description of the consumer's behavior.
+- The UI always has a fixture adapter compatible with the contract, so neither side waits for a
+  finished backend.
+- A contract change requires a compatibility adapter or a shared integration wave.
+- After 15 minutes of being blocked, the owner records a fallback and reports it to the integration
+  captain.
+- The scraper, real payments, and a second category do not enter the MVP.
+- An elaborate evals panel is dropped from the main UI; 3–5 key results in the receipt or the final
+  view are enough.
 
-## Pierwsze konkretne kroki
+## First concrete steps
 
-1. Jakub wybiera stack i tworzy manifest workspace oraz `packages/contracts`.
-2. Jakub przenosi przykłady z `docs/hackathon/contracts.md` do walidowanych schematów.
-3. Frontend owner przygotowuje frontendowy adapter i UI na tych przykładach.
-4. Jakub implementuje `golden-path.json` oraz endpointy compile/run/events/checkout.
-5. Łączymy cienki pion, zamrażamy kontrakt i dopiero potem poszerzamy mechanikę.
+1. Jakub picks the stack and creates the workspace manifest and `packages/contracts`.
+2. Jakub moves the examples from `docs/hackathon/contracts.md` into validated schemas.
+3. The frontend owner prepares the frontend adapter and UI on those examples.
+4. Jakub implements `golden-path.json` and the compile/run/events/checkout endpoints.
+5. We connect the thin vertical, freeze the contract, and only then expand the mechanics.

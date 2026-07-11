@@ -1,56 +1,67 @@
-# Kontrakty UI–backend
+# UI-backend contracts
 
-Ten dokument zamraża tylko granice potrzebne do równoległej pracy. Źródłem prawdy po utworzeniu
-kodu będą walidowane schematy w `packages/contracts`; przykłady fixture muszą przechodzić te same
-walidatory co odpowiedzi API.
+This document freezes only the boundaries needed for parallel work. Once the code exists, the
+source of truth is the validated schemas in `packages/contracts`; fixture examples must pass the
+same validators as API responses.
 
-## Kształt systemu
+## System shape
 
 ```text
 apps/web
   -> HTTP/SSE adapter
   -> apps/api (Node.js) + packages/domain
-  -> replay fixtures / OpenAI / testowy checkout
+  -> replay fixtures / OpenAI / test checkout
 ```
 
-## Niezmienniki
+## Invariants
 
-- AI interpretuje intencję, wykrywa niejednoznaczność i pomaga w matchingu.
-- Deterministyczny kod liczy koszt, egzekwuje mandat i autoryzuje checkout.
-- Wszystkie kwoty są integerami w minor units wraz z kodem waluty.
-- Każda decyzja wskazuje `mandateVersion`, `offerVersion` i listę kodów powodów.
-- UI nie wylicza decyzji biznesowej i nie traktuje wyjaśnienia tekstowego jako źródła prawdy.
-- Każde polecenie mutujące przyjmuje `idempotencyKey`.
+- AI interprets intent, detects ambiguity, and helps with matching.
+- Deterministic code computes cost, enforces the mandate, and authorizes checkout.
+- All amounts are integers in minor units together with a currency code.
+- Every decision references `mandateVersion`, `offerVersion`, and a list of reason codes.
+- The UI does not derive business decisions and does not treat the textual explanation as a source
+  of truth.
+- Every mutating command accepts an `idempotencyKey`.
 
-## Mapa własności
+## Ownership map
 
-| Surface | Właściciel | Konsument | Stabilny punkt wejścia |
+| Surface | Owner | Consumer | Stable entry point |
 | --- | --- | --- | --- |
-| Schematy i kody powodów | Jakub | UI, evale | `packages/contracts` |
-| Brief i kompilacja mandatu | Jakub | UI | `POST /api/mandates/compile` |
-| Monitoring i replay | Jakub | UI | `POST /api/runs`, `GET /api/runs/:id/events` |
-| Decyzje i trust receipt | Jakub | UI | zdarzenia run oraz `GET /api/receipts/:id` |
-| Widoki i stany interakcji | frontend owner | użytkownik | `apps/web` |
-| Fixture adapter UI | frontend owner | UI | `apps/web/src/data` |
+| Schemas and reason codes | Jakub | UI, evals | `packages/contracts` |
+| Brief and mandate compilation | Jakub | UI | `POST /api/mandates/compile` |
+| Monitoring and replay | Jakub | UI | `POST /api/runs`, `GET /api/runs/:id/events` |
+| Decisions and trust receipts | Jakub | UI | run events plus `GET /api/receipts/:id` |
+| Views and interaction states | frontend owner | user | `apps/web` |
+| UI fixture adapter | frontend owner | UI | `apps/web/src/data` |
 
 ## `ui-api-v1`
 
-- Właściciel: Jakub.
-- Konsument: frontend owner/UI.
-- Status: `v1 FROZEN` od **2026-07-11**; zmiany tylko według protokołu poniżej.
-- Transport: JSON po HTTP; monitoring przez polling `GET /api/runs/:id/events?after=<sequence>`.
-- Timeout UI: 10 s dla komend; po timeout UI pokazuje retry z tym samym `idempotencyKey`.
-- Kompatybilność: wolno dodawać pola opcjonalne; nie wolno zmieniać znaczenia, usuwać pól ani kodów
-  powodów bez uzgodnienia z konsumentem.
+- Owner: Jakub.
+- Consumer: frontend owner/UI.
+- Status: `v1 FROZEN` since **2026-07-11**; changes only via the protocol below.
+- Transport: JSON over HTTP; monitoring via polling `GET /api/runs/:id/events?after=<sequence>`.
+- UI timeout: 10 s for commands; after a timeout the UI shows a retry with the same
+  `idempotencyKey`.
+- Compatibility: adding optional fields is allowed; changing meanings, removing fields, or removing
+  reason codes requires consumer sign-off.
 
-### Kompilacja mandatu
+### Mandate compilation
+
+The request accepts optional structural fields alongside the free-text brief. When present, the
+structural values always win over anything parsed or extracted from the brief:
+
+- `maxTotal` (Money: `{ amountMinor, currency }`) - the budget cap for the mandate.
+- `purchaseBy` (ISO date string `YYYY-MM-DD`, or explicit `null` for "buy now") - the purchase
+  deadline. Omit the field to let the compiler extract a deadline from the brief.
 
 ```json
 POST /api/mandates/compile
 {
-  "brief": "Nike Dunk Low, rozmiar 43, nowe, maksymalnie 80 EUR z dostawą",
+  "brief": "Nike Dunk Low, size 43, new, maximum 80 EUR with delivery",
   "baseCurrency": "EUR",
-  "destinationCountry": "PL"
+  "destinationCountry": "PL",
+  "maxTotal": { "amountMinor": 8000, "currency": "EUR" },
+  "purchaseBy": "2026-07-18"
 }
 ```
 
@@ -62,6 +73,7 @@ POST /api/mandates/compile
     "version": 1,
     "product": { "query": "Nike Dunk Low", "size": "EU 43", "condition": "NEW" },
     "maxTotal": { "amountMinor": 8000, "currency": "EUR" },
+    "purchaseBy": "2026-07-18",
     "sellerPolicy": { "allowResellers": false },
     "autonomy": "AUTO_BUY_IF_LOW_STOCK",
     "status": "DRAFT"
@@ -71,32 +83,38 @@ POST /api/mandates/compile
 }
 ```
 
-Błąd walidacji:
+`Mandate.purchaseBy` is an ISO date or `null`. A `null` means the mandate has no deadline and
+autonomous purchases stay allowed indefinitely.
+
+Validation error:
 
 ```json
 422 Unprocessable Entity
 {
   "mandate": { "id": "m_02", "version": 1, "status": "DRAFT" },
   "ambiguities": [
-    { "field": "product.size", "code": "REQUIRED", "question": "Jaki rozmiar ma mieć produkt?" }
+    { "field": "product.size", "code": "REQUIRED", "question": "What size should the product be?" }
   ],
   "compiler": "openai",
   "error": {
     "code": "AMBIGUOUS_MANDATE",
-    "message": "Uzupełnij brakujące warunki mandatu.",
+    "message": "Provide the missing mandate constraints.",
     "fieldErrors": [{ "field": "product.size", "code": "REQUIRED" }]
   }
 }
 ```
 
-### Zatwierdzenie i uruchomienie
+A structural `maxTotal` in the request resolves the `maxTotal` ambiguity even when the brief does
+not mention a budget.
+
+### Approval and run start
 
 ```json
 POST /api/mandates/m_01/approve
 { "expectedVersion": 1, "idempotencyKey": "approve-demo-01" }
 ```
 
-Cofnięcie zgody podbija wersję mandatu i blokuje późniejszy checkout:
+Revoking consent bumps the mandate version and blocks any later checkout:
 
 ```json
 POST /api/mandates/m_01/revoke
@@ -114,7 +132,7 @@ POST /api/runs
 { "runId": "run_01", "status": "COMPLETED", "eventCursor": "0" }
 ```
 
-Polling zwraca wyłącznie zdarzenia o sekwencji większej niż `after`:
+Polling returns only events with a sequence greater than `after`:
 
 ```json
 GET /api/runs/run_01/events?after=0
@@ -126,7 +144,7 @@ GET /api/runs/run_01/events?after=0
 }
 ```
 
-### Zdarzenie decyzji
+### Decision event
 
 ```json
 {
@@ -141,22 +159,30 @@ GET /api/runs/run_01/events?after=0
     "offerVersion": 2,
     "total": { "amountMinor": 7860, "currency": "EUR" },
     "reasonCodes": ["EXACT_VARIANT", "WITHIN_TOTAL_CAP", "LOW_STOCK"],
-    "explanation": "Oferta spełnia wszystkie zatwierdzone warunki."
+    "explanation": "The offer satisfies all approved constraints."
   }
 }
 ```
 
-Dozwolone akcje: `IGNORE`, `ALERT`, `ASK_USER`, `AUTO_BUY`. Nieznany `type` zdarzenia UI ignoruje
-i zapisuje diagnostycznie; nieznana akcja decyzji jest błędem kontraktu i blokuje checkout UI.
+Allowed actions: `IGNORE`, `ALERT`, `ASK_USER`, `AUTO_BUY`. The UI ignores unknown event `type`s
+and logs them diagnostically; an unknown decision action is a contract error and blocks the UI
+checkout.
 
-### Testowy checkout
+#### Purchase deadline enforcement
+
+When a decision is evaluated after the mandate's `purchaseBy` date has passed (the deadline day
+itself still counts, end of day UTC), the decision engine downgrades `AUTO_BUY` to `ALERT` and adds
+the `DEADLINE_PASSED` reason code. The offer is still surfaced to the user, but autonomous
+purchasing is disabled, and checkout revalidation rejects the non-`AUTO_BUY` decision.
+
+### Test checkout
 
 ```json
 POST /api/decisions/d_03/checkout
 { "mandateVersion": 1, "offerVersion": 2, "idempotencyKey": "checkout-d_03" }
 ```
 
-Sukces:
+Success:
 
 ```json
 200 OK
@@ -168,33 +194,71 @@ Sukces:
 }
 ```
 
-Blokada po zmianie ceny lub zgody:
+Blocked after a price or consent change:
 
 ```json
 409 Conflict
 {
   "error": {
     "code": "REVALIDATION_FAILED",
-    "message": "Oferta zmieniła się przed finalizacją.",
+    "message": "The offer changed before finalization.",
     "reasonCodes": ["PRICE_CHANGED", "TOTAL_CAP_EXCEEDED"]
   }
 }
 ```
 
-Retry z tym samym kluczem zwraca ten sam `purchaseId` i `idempotentReplay: true`.
+A retry with the same key returns the same `purchaseId` and `idempotentReplay: true`.
 
-### Kontrolowana mutacja demo
+### Receipts list
 
-Mutacja jest lokalnym narzędziem demonstracyjnym, a nie produkcyjnym endpointem sklepu:
+`GET /api/receipts` returns every trust receipt in the store, newest first
+(`ListReceiptsResponse` in `packages/contracts`). The UI uses it to restore purchase history after
+a page reload:
+
+```json
+GET /api/receipts
+{
+  "receipts": [
+    {
+      "id": "r_01",
+      "purchaseId": "p_01",
+      "decisionId": "d_03",
+      "mandateId": "m_01",
+      "mandateVersion": 1,
+      "offerId": "offer-nl-winner",
+      "offerVersion": 2,
+      "cost": { "total": { "amountMinor": 7650, "currency": "EUR" } },
+      "reasonCodes": ["EXACT_VARIANT", "WITHIN_TOTAL_CAP", "LOW_STOCK"],
+      "idempotencyKey": "checkout-d_03",
+      "completedAt": "2026-07-11T10:05:00Z"
+    }
+  ]
+}
+```
+
+Individual receipts remain available at `GET /api/receipts/:receiptId`.
+
+### Controlled demo mutation
+
+The mutation is a local demo tool, not a production shop endpoint:
 
 ```json
 POST /api/runs/run_01/mutations
 { "type": "PRICE_CHANGED", "offerId": "offer-nl-winner", "amountMinor": 7900 }
 ```
 
-Odpowiedź zawiera ofertę z podbitą wersją oraz nowy kursor. Checkout utworzony na poprzedniej
-wersji zwraca `409 REVALIDATION_FAILED` z `OFFER_VERSION_CHANGED`, `PRICE_CHANGED` i — jeśli pełny
-koszt przekroczył limit — `TOTAL_CAP_EXCEEDED`.
+The response contains the offer with a bumped version plus a new cursor. A checkout created on the
+previous version returns `409 REVALIDATION_FAILED` with `OFFER_VERSION_CHANGED`, `PRICE_CHANGED`
+and - when the full cost exceeded the cap - `TOTAL_CAP_EXCEEDED`.
+
+### Reason codes
+
+The full enum lives in `packages/contracts` (`ReasonCodeSchema`): `EXACT_VARIANT`,
+`VARIANT_MISMATCH`, `WITHIN_TOTAL_CAP`, `TOTAL_CAP_EXCEEDED`, `LOW_STOCK`, `RESELLER_BLOCKED`,
+`FAKE_DISCOUNT`, `INVALID_COUPON`, `INSUFFICIENT_TRUST`, `APPROVAL_REQUIRED`, `DEADLINE_PASSED`.
+
+- `DEADLINE_PASSED` - the mandate's `purchaseBy` date has passed; the decision was downgraded from
+  `AUTO_BUY` to `ALERT`.
 
 ### Safety counters
 
@@ -211,19 +275,19 @@ GET /api/evals/summary
 }
 ```
 
-## Dane współdzielone
+## Shared data
 
-| Nazwa | Źródło prawdy | Właściciel | Reset / seed |
+| Name | Source of truth | Owner | Reset / seed |
 | --- | --- | --- | --- |
-| Golden path | `fixtures/scenarios/golden-path.json` | Jakub | docelowo `npm run demo:reset` |
-| Pułapka walutowa | `fixtures/scenarios/uk-currency-trap.json` | Jakub | ten sam reset |
-| Fałszywy rabat | `fixtures/scenarios/fake-discount.json` | Jakub | ten sam reset |
-| UI offline fixture | wygenerowane z powyższych kontraktów | frontend owner | docelowo `npm run web:fixtures` |
+| Golden path | `fixtures/scenarios/golden-path.json` | Jakub | eventually `npm run demo:reset` |
+| Currency trap | `fixtures/scenarios/uk-currency-trap.json` | Jakub | same reset |
+| Fake discount | `fixtures/scenarios/fake-discount.json` | Jakub | same reset |
+| UI offline fixture | generated from the contracts above | frontend owner | eventually `npm run web:fixtures` |
 
-## Zmiana kontraktu
+## Changing a contract
 
-1. Właściciel opisuje różnicę i wskazuje konsumentów.
-2. Konsument potwierdza zmianę albo prosi o adapter kompatybilności.
-3. Integration captain oznacza kontrakt `CHANGING` i dodaje broadcast.
-4. Zmiana oraz adapter trafiają w jednej fali integracyjnej.
-5. Po contract smoke status wraca do `FROZEN`.
+1. The owner describes the difference and identifies the consumers.
+2. The consumer confirms the change or asks for a compatibility adapter.
+3. The integration captain marks the contract `CHANGING` and adds a broadcast.
+4. The change and the adapter land in a single integration wave.
+5. After the contract smoke test the status returns to `FROZEN`.

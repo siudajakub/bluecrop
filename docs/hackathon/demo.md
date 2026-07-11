@@ -1,70 +1,70 @@
-# Deal Hunter — runbook demo
+# Deal Hunter — demo runbook
 
-Uzupełnić dokładny commit, adresy i komendy do **2026-07-11 17:20 CEST**. Demo musi działać na tym
-samym seedzie lokalnie, nawet jeśli hosting albo OpenAI są niedostępne.
+Fill in the exact commit, addresses, and commands by **2026-07-11 17:20 CEST**. The demo must run on
+the same seed locally, even if hosting or OpenAI are unavailable.
 
-## Dokładny artefakt
+## Exact artifact
 
-- Commit / tag: zostanie zapisany jako `demo-v1` po dwóch udanych próbach.
-- Hosted URL: do ustalenia.
-- Local checkout: katalog główny repozytorium.
+- Commit / tag: will be recorded as `demo-v1` after two successful rehearsals.
+- Hosted URL: to be determined.
+- Local checkout: the repository root directory.
 - Environment owner: Jakub.
-- Prezenter / backup: do ustalenia.
+- Presenter / backup: to be determined.
 
-## Czysty start i reset
+## Clean start and reset
 
-Aktualne komendy:
+Current commands:
 
 ```bash
 npm install
 npm run dev
 ```
 
-W drugim terminalu:
+In a second terminal:
 
 ```bash
 npm run demo:reset
 npm run demo:smoke
 ```
 
-- Wymagane zmienne w trybie OpenAI: `MANDATE_COMPILER_MODE=openai`, `OPENAI_API_KEY` i opcjonalnie
-  `OPENAI_MODEL`; tryb fixture nie wymaga sekretów.
-- Health signal: `GET /health` zwraca 200, a UI pokazuje stan „Demo ready”.
-- Reset: poniżej 10 sekund i ponowne ustawienie seeda `20260711`.
+- Required variables in OpenAI mode: `MANDATE_COMPILER_MODE=openai`, `OPENAI_API_KEY`, and optionally
+  `OPENAI_MODEL`; fixture mode requires no secrets.
+- Health signal: `GET /health` returns 200, and the UI shows the "Demo ready" state.
+- Reset: under 10 seconds and re-sets seed `20260711`.
 
-## Scenariusz 2–3 minuty
+## 2–3 minute scenario
 
-| Czas | Akcja prezentera | Co widzi publiczność | Teza |
+| Time | Presenter action | What the audience sees | Point |
 | --- | --- | --- | --- |
-| 0:00 | Wpisuje brief Nike Dunk Low, EU 43, do 80 EUR | AI tworzy jawny mandat | Agent rozumie intencję, ale użytkownik zatwierdza granice |
-| 0:30 | Zatwierdza mandat i uruchamia monitoring | Oś czasu ofert i pełne koszty | To proces działający w czasie, nie chatbot |
-| 0:55 | Odtwarza ofertę z UK | Koszt po FX i dostawie przekracza limit; `IGNORE` | Cena na karcie nie jest prawdziwym kosztem |
-| 1:20 | Odtwarza fałszywy rabat | Historia ceny i kod ryzyka; brak alertu | Silnik odrzuca pozorną okazję |
-| 1:45 | Odtwarza ofertę z NL, niski stock | `AUTO_BUY` albo gotowość do checkoutu | Wszystkie warunki mandatu są sprawdzone |
-| 2:05 | Wstrzykuje zmianę ceny i ponawia checkout | Rewalidacja blokuje zakup | Agent nie przekracza mandatu |
-| 2:25 | Resetuje zmianę i ponawia dwa razy | Jeden purchase ID oraz trust receipt | Idempotencja i audyt są mierzalne |
-| 2:45 | Pokazuje evale | Zero naruszeń limitu i duplikatów | Bezpieczeństwo jest testowane, nie deklarowane |
+| 0:00 | Types the brief Nike Dunk Low, EU 43, up to 80 EUR | The AI creates an explicit mandate | The agent understands intent, but the user approves the limits |
+| 0:30 | Approves the mandate and starts monitoring | Offer timeline and full costs | This is a process that runs over time, not a chatbot |
+| 0:55 | Replays the UK offer | Cost after FX and delivery exceeds the cap; `IGNORE` | The listed price is not the real cost |
+| 1:20 | Replays the fake discount | Price history and risk code; no alert | The engine rejects an apparent deal |
+| 1:45 | Replays the NL offer, low stock | `AUTO_BUY` or readiness for checkout | All mandate conditions are checked |
+| 2:05 | Injects a price change and retries checkout | Revalidation blocks the purchase | The agent does not exceed the mandate |
+| 2:25 | Resets the change and retries twice | One purchase ID and the trust receipt | Idempotency and audit are measurable |
+| 2:45 | Shows the evals | Zero cap violations and duplicates | Safety is tested, not declared |
 
-## Fallbacki
+## Fallbacks
 
-| Awaria | Wykrycie | Odzyskanie | Maksymalna pauza |
+| Failure | Detection | Recovery | Maximum pause |
 | --- | --- | --- | --- |
-| OpenAI timeout/quota | komunikat kompilacji mandatu | `DEMO_FIXTURE_MODE=1`, załadowany mandat | 10 s |
-| API/hosting niedostępne | healthcheck czerwony | lokalny serwer albo UI fixture adapter | 20 s |
-| Stan demo zanieczyszczony | inne ID lub sekwencja | `npm run demo:reset` | 10 s |
-| AUTO_BUY nie przechodzi evali | false-buy lub cap violation | zakończyć na `ASK_USER` | bez pauzy |
+| OpenAI timeout/quota | mandate compilation message | `DEMO_FIXTURE_MODE=1`, loaded mandate | 10 s |
+| API/hosting unavailable | healthcheck red | local server or UI fixture adapter | 20 s |
+| Demo state polluted | different ID or sequence | `npm run demo:reset` | 10 s |
+| AUTO_BUY fails evals | false-buy or cap violation | end on `ASK_USER` | no pause |
 
-## Uczciwe ograniczenia
+## Honest limitations
 
-- Sprzedawcy, ceny, FX, dostawa, ryzyko i płatność są deterministycznymi danymi demo.
-- Nie ma scrapingu ani prawdziwych pieniędzy; produkcja wymaga adapterów sklepów, ochrony danych,
-  obserwowalności, polityk regionalnych i kontroli fraudowej.
-- MVP obsługuje jeden kraj dostawy, jedną walutę bazową i jedną główną kategorię produktów.
+- Merchants, prices, FX, delivery, risk, and payment are deterministic demo data.
+- There is no scraping or real money; production requires store adapters, data protection,
+  observability, regional policies, and fraud controls.
+- The MVP supports one delivery country, one base currency, and one main product category.
 
-## Checklista submission
+## Submission checklist
 
-- README wskazuje jedną ścieżkę startu.
-- Hosted link wskazuje commit/tag demo-safe.
-- Lokalny tryb fixture został uruchomiony na maszynie prezentacyjnej.
-- Film albo zrzuty golden path są dostępne offline.
-- Repo i artefakty nie zawierają sekretów ani prywatnych danych.
+- The README points to a single start path.
+- The hosted link points to the demo-safe commit/tag.
+- Local fixture mode has been run on the presentation machine.
+- A video or golden-path screenshots are available offline.
+- The repo and artifacts contain no secrets or private data.

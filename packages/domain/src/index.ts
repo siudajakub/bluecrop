@@ -48,7 +48,13 @@ function isFakeDiscount(offer: CanonicalOffer): boolean {
   return offer.claimedDiscountPercent - realDiscount >= 15;
 }
 
-export function evaluateOffer(offer: CanonicalOffer, mandate: Mandate, decisionId: string): Decision {
+function isPastPurchaseDeadline(purchaseBy: string | null, now: Date): boolean {
+  if (!purchaseBy) return false;
+  // The deadline day itself still counts: the mandate expires at the end of that day (UTC).
+  return now.getTime() > Date.parse(`${purchaseBy}T23:59:59.999Z`);
+}
+
+export function evaluateOffer(offer: CanonicalOffer, mandate: Mandate, decisionId: string, now: Date = new Date()): Decision {
   const cost = calculateTotalCost(offer, mandate.maxTotal?.currency ?? "EUR");
   const reasons: ReasonCode[] = [];
   let action: Decision["action"] = "ALERT";
@@ -91,6 +97,11 @@ export function evaluateOffer(offer: CanonicalOffer, mandate: Mandate, decisionI
     reasons.push("LOW_STOCK");
   }
 
+  if (action === "AUTO_BUY" && isPastPurchaseDeadline(mandate.purchaseBy, now)) {
+    action = "ALERT";
+    reasons.push("DEADLINE_PASSED");
+  }
+
   return {
     id: decisionId,
     offerId: offer.id,
@@ -105,11 +116,12 @@ export function evaluateOffer(offer: CanonicalOffer, mandate: Mandate, decisionI
 }
 
 function explanationFor(action: Decision["action"], reasons: ReasonCode[]): string {
-  if (reasons.includes("TOTAL_CAP_EXCEEDED")) return "Pełny koszt oferty przekracza zatwierdzony limit.";
-  if (reasons.includes("FAKE_DISCOUNT")) return "Deklarowany rabat nie znajduje potwierdzenia w historii ceny.";
-  if (reasons.includes("VARIANT_MISMATCH")) return "Oferta nie odpowiada dokładnemu wariantowi z mandatu.";
-  if (action === "AUTO_BUY") return "Oferta spełnia mandat i ma niski stan magazynowy.";
-  if (action === "ASK_USER") return "Oferta wymaga dodatkowej decyzji użytkownika.";
-  if (action === "ALERT") return "Oferta spełnia warunki i jest warta uwagi.";
-  return "Oferta została odrzucona przez reguły mandatu.";
+  if (reasons.includes("TOTAL_CAP_EXCEEDED")) return "The full cost of the offer exceeds the approved cap.";
+  if (reasons.includes("FAKE_DISCOUNT")) return "The claimed discount is not backed by the price history.";
+  if (reasons.includes("VARIANT_MISMATCH")) return "The offer does not match the exact variant in the mandate.";
+  if (reasons.includes("DEADLINE_PASSED")) return "The purchase deadline has passed, so the offer is surfaced as an alert instead of an automatic purchase.";
+  if (action === "AUTO_BUY") return "The offer satisfies the mandate and stock is low.";
+  if (action === "ASK_USER") return "The offer needs an additional decision from the user.";
+  if (action === "ALERT") return "The offer meets the conditions and is worth a look.";
+  return "The offer was rejected by the mandate rules.";
 }

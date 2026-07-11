@@ -3,7 +3,7 @@ import { calculateTotalCost } from "../../domain/src/index.js";
 
 export class RevalidationError extends Error {
   constructor(public readonly reasonCodes: string[]) {
-    super("Oferta zmieniła się przed finalizacją.");
+    super("The offer changed before finalization.");
   }
 }
 

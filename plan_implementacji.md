@@ -1,76 +1,82 @@
-# Plan implementacji: Deal Hunter
+# Implementation plan: Deal Hunter
 
-> **Aktualizacja 2026-07-11:** deadline wynosi 18:00 CEST, a dostępny czas to około pięć godzin.
-> Nadrzędny harmonogram, podział Next.js/Node.js oraz godziny freeze znajdują się w
-> [PLAN_ZESPOLU_HACKATHON.md](PLAN_ZESPOLU_HACKATHON.md). Poniższy dokument pozostaje opisem
-> kolejności technicznej, ale jego pierwotny harmonogram 36-godzinny nie obowiązuje.
+> **Update 2026-07-11:** the deadline is 18:00 CEST, and the time available is about five hours. The
+> overarching schedule, the Next.js/Node.js split, and the freeze times are in
+> [PLAN_ZESPOLU_HACKATHON.md](PLAN_ZESPOLU_HACKATHON.md). This document remains a description of the
+> technical ordering, but its original 36-hour schedule no longer applies.
 
-## Zalecenie techniczne
+## Technical recommendation
 
-Zbudować modularny monolit w TypeScript. Model interpretuje intencję i proponuje działania za pomocą typowanych narzędzi. Kod deterministyczny oblicza koszty, egzekwuje ograniczenia i zatwierdza działania. Sprzedawcy, ceny, kursy walut i checkout korzystają z odtwarzalnych danych testowych.
+Build a modular monolith in TypeScript. The model interprets intent and proposes actions via typed
+tools. Deterministic code computes costs, enforces constraints, and authorizes actions. Merchants,
+prices, exchange rates, and checkout use reproducible test data.
 
-## Zalecany podział zespołu
+## Recommended team split
 
-- Product/UX i frontend: brief, mandat, oś czasu, trust receipt i scenariusz prezentacji.
-- Agent i backend: Responses API, narzędzia oraz orkiestracja.
-- Domena i bezpieczeństwo: koszt końcowy, polityki, maszyna stanów i idempotencja.
-- Evale i demonstracja: symulator, dane testowe, scenariusze red-team i metryki.
+- Product/UX and frontend: brief, mandate, timeline, trust receipt, and the presentation scenario.
+- Agent and backend: Responses API, tools, and orchestration.
+- Domain and safety: final cost, policies, state machine, and idempotency.
+- Evals and demonstration: simulator, test data, red-team scenarios, and metrics.
 
-W trzyosobowym zespole połączcie role agent/backend oraz domena/bezpieczeństwo. Za evale powinien odpowiadać cały zespół.
+On a three-person team, combine the agent/backend and domain/safety roles. Evals should be owned by
+the whole team.
 
-## Etap 1: kontrakty i szkielet
+## Stage 1: contracts and scaffold
 
-1. Ustalić schematy domenowe i niezmienniki bezpieczeństwa.
-2. Zbudować minimalny przepływ UI: brief → przegląd mandatu → monitoring.
-3. Zaimplementować zapis stanu i osi czasu zdarzeń.
-4. Połączyć kompilację mandatu ze Structured Outputs.
+1. Define the domain schemas and safety invariants.
+2. Build a minimal UI flow: brief → mandate review → monitoring.
+3. Implement state and event-timeline persistence.
+4. Connect mandate compilation with Structured Outputs.
 
-Kryterium ukończenia: dowolny brief tworzy poprawny, widoczny i wersjonowany mandat.
+Completion criterion: any brief creates a valid, visible, and versioned mandate.
 
-## Etap 2: silnik decyzji
+## Stage 2: decision engine
 
-1. Zaimplementować symulator z seedem i możliwością odtworzenia przebiegu.
-2. Normalizować oferty i sprawdzać dokładny wariant.
-3. Obliczać koszt końcowy za pomocą deterministycznego źródła referencyjnego.
-4. Oceniać ryzyko i uruchamiać silnik polityk.
-5. Zapisywać każdy etap jako ustrukturyzowany dowód.
+1. Implement a simulator with a seed and the ability to replay a run.
+2. Normalize offers and check the exact variant.
+3. Compute the final cost via a deterministic reference source.
+4. Assess risk and run the policy engine.
+5. Record every stage as structured evidence.
 
-Kryterium ukończenia: każde zdarzenie kończy się powtarzalną decyzją `IGNORE`, `ALERT`, `ASK_USER` albo `AUTO_BUY`.
+Completion criterion: every event ends with a repeatable `IGNORE`, `ALERT`, `ASK_USER`, or `AUTO_BUY`
+decision.
 
-## Etap 3: bezpieczny checkout
+## Stage 3: safe checkout
 
-1. Zbudować testowy checkout z kluczem idempotencji.
-2. Ponownie sprawdzać cenę, dostępność, wariant i zgodę.
-3. Blokować istotne zmiany i prosić o ponowne zatwierdzenie.
-4. Generować niezmienny trust receipt.
+1. Build a test checkout with an idempotency key.
+2. Recheck price, availability, variant, and consent.
+3. Block material changes and ask for re-approval.
+4. Generate an immutable trust receipt.
 
-Kryterium ukończenia: ponowienia nie dublują zakupów, a cofnięcie zgody lub przekroczenie limitu blokuje transakcję.
+Completion criterion: retries do not duplicate purchases, and revoking consent or exceeding the cap
+blocks the transaction.
 
-## Etap 4: evale i demonstracja
+## Stage 4: evals and demonstration
 
-1. Przygotować 10–15 oznaczonych przypadków skupionych na limicie, wariancie, zgodzie i duplikatach.
-2. Uruchomić testy niezmienników oraz metryki użyteczności i bezpieczeństwa.
-3. Dodać panel wyników i możliwość odtwarzania błędów.
-4. Przećwiczyć prezentację trwającą 2–3 minuty.
-5. Zamrozić stabilny build i lokalny zestaw danych awaryjnych.
+1. Prepare 10–15 labeled cases focused on the cap, variant, consent, and duplicates.
+2. Run invariant tests and usefulness/safety metrics.
+3. Add a results panel and the ability to replay failures.
+4. Rehearse a 2–3 minute presentation.
+5. Freeze a stable build and a local fallback data set.
 
-Kryterium ukończenia: demonstracja działa powtarzalnie bez kruchych zależności, pokazuje metryki i nie narusza limitów ani idempotencji.
+Completion criterion: the demonstration works repeatably without brittle dependencies, shows metrics,
+and does not violate caps or idempotency.
 
-## Archiwalny harmonogram pełnego wariantu
+## Archived full-variant schedule
 
-Ten wariant nie obowiązuje w pięciogodzinnym sprincie; zachowujemy go wyłącznie jako plan
-rozwinięcia projektu po hackathonie.
+This variant does not apply to the five-hour sprint; we keep it only as a plan for developing the
+project after the hackathon.
 
-- 0–3 h: kontrakty danych, UX i szkielet.
-- 3–10 h: symulator, koszt końcowy i silnik polityk.
-- 10–16 h: integracja OpenAI, matching i wyjaśnienia.
-- 16–22 h: checkout, ponowna walidacja, audyt i idempotencja.
-- 22–30 h: zestaw ewaluacyjny, testy, red-team i panel wyników.
-- 30–36 h: dopracowanie interfejsu, próba prezentacji, wariant awaryjny i poprawki.
+- 0–3 h: data contracts, UX, and scaffold.
+- 3–10 h: simulator, final cost, and policy engine.
+- 10–16 h: OpenAI integration, matching, and explanations.
+- 16–22 h: checkout, revalidation, audit, and idempotency.
+- 22–30 h: evaluation set, tests, red-team, and results panel.
+- 30–36 h: interface polish, presentation rehearsal, fallback variant, and fixes.
 
-## Kryteria kontynuacji
+## Continuation criteria
 
-- Dodawajcie integracje opcjonalne dopiero wtedy, gdy działa pełny przepływ na danych testowych.
-- Wstrzymajcie dodatki, dopóki nie działają testy limitu, zgody i idempotencji.
-- Pomińcie scraping i prawdziwe płatności, jeśli zagrażają powtarzalności demonstracji.
-- Dodajcie drugą kategorię dopiero po zamknięciu evali i głównego scenariusza.
+- Add optional integrations only once the full flow works on test data.
+- Hold off on additions until the cap, consent, and idempotency tests pass.
+- Skip scraping and real payments if they threaten the demonstration's repeatability.
+- Add a second category only after closing the evals and the main scenario.

@@ -10,6 +10,7 @@ const mandate: Mandate = {
   destinationCountry: "PL",
   product: { query: "Nike Dunk Low", size: "EU 43", condition: "NEW" },
   maxTotal: { amountMinor: 8000, currency: "EUR" },
+  purchaseBy: null,
   sellerPolicy: { allowResellers: false },
   autonomy: "AUTO_BUY_IF_LOW_STOCK",
 };
@@ -82,5 +83,42 @@ describe("decision engine", () => {
     const offer = structuredClone(loadScenario("golden-path").offers[2]!);
     const decision = evaluateOffer(offer, { ...mandate, autonomy: "ALERT_ONLY" }, "d-alert");
     expect(decision.action).toBe("ALERT");
+  });
+
+  it("downgrades AUTO_BUY to ALERT once the purchase deadline has passed", () => {
+    const offer = structuredClone(loadScenario("golden-path").offers[2]!);
+    const decision = evaluateOffer(
+      offer,
+      { ...mandate, purchaseBy: "2026-07-01" },
+      "d-deadline",
+      new Date("2026-07-11T10:00:00.000Z"),
+    );
+    expect(decision.action).toBe("ALERT");
+    expect(decision.reasonCodes).toContain("DEADLINE_PASSED");
+    expect(decision.explanation).toContain("deadline");
+  });
+
+  it("keeps AUTO_BUY while the purchase deadline is still ahead", () => {
+    const offer = structuredClone(loadScenario("golden-path").offers[2]!);
+    const decision = evaluateOffer(
+      offer,
+      { ...mandate, purchaseBy: "2026-07-20" },
+      "d-deadline-ok",
+      new Date("2026-07-11T10:00:00.000Z"),
+    );
+    expect(decision.action).toBe("AUTO_BUY");
+    expect(decision.reasonCodes).not.toContain("DEADLINE_PASSED");
+  });
+
+  it("treats the deadline day itself as still valid", () => {
+    const offer = structuredClone(loadScenario("golden-path").offers[2]!);
+    const decision = evaluateOffer(
+      offer,
+      { ...mandate, purchaseBy: "2026-07-11" },
+      "d-deadline-day",
+      new Date("2026-07-11T18:00:00.000Z"),
+    );
+    expect(decision.action).toBe("AUTO_BUY");
+    expect(decision.reasonCodes).not.toContain("DEADLINE_PASSED");
   });
 });

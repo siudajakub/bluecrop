@@ -16,31 +16,34 @@ export class FixtureMandateCompiler implements MandateCompiler {
   readonly kind = "fixture" as const;
 
   async compile(input: CompileMandateRequest): Promise<MandateDraft> {
-    const size = input.brief.match(/(?:rozmiar|size)\s*(?:EU\s*)?(\d{2})/i)?.[1];
-    const limit = input.brief.match(/(?:maksymalnie|max(?:imum)?|do)\s*(\d+(?:[.,]\d+)?)\s*(EUR|GBP|USD|PLN)/i);
+    const size = input.brief.match(/size\s*(?:EU\s*)?(\d{2})/i)?.[1];
+    const limit = input.brief.match(/(?:max(?:imum)?|up to)\s*(\d+(?:[.,]\d+)?)\s*(EUR|GBP|USD|PLN)/i);
+    const deadline = input.brief.match(/\bby\s+(\d{4}-\d{2}-\d{2})/i)?.[1] ?? null;
     const query = input.brief.split(",")[0]?.trim() || input.brief.trim();
     const lower = input.brief.toLocaleLowerCase();
     const ambiguities: MandateDraft["ambiguities"] = [];
-    if (!size) ambiguities.push({ field: "product.size", code: "REQUIRED", question: "Jaki rozmiar ma mieć produkt?" });
-    if (!limit) ambiguities.push({ field: "maxTotal", code: "REQUIRED", question: "Jaki jest maksymalny koszt z dostawą?" });
+    if (!size) ambiguities.push({ field: "product.size", code: "REQUIRED", question: "What size should the product be?" });
+    if (!limit) ambiguities.push({ field: "maxTotal", code: "REQUIRED", question: "What is the maximum total cost including delivery?" });
 
-    return MandateDraftSchema.parse({
+    const draft = MandateDraftSchema.parse({
       product: {
         query,
         size: normalizeSize(size ?? null),
-        condition: lower.includes("używan") || lower.includes("used") ? "USED" : "NEW",
+        condition: /\bused\b/.test(lower) ? "USED" : "NEW",
       },
       maxTotal: limit
         ? { amountMinor: Math.round(Number(limit[1]?.replace(",", ".")) * 100), currency: limit[2]?.toUpperCase() }
         : null,
-      sellerPolicy: { allowResellers: !(lower.includes("bez reseller") || lower.includes("no reseller")) },
-      autonomy: lower.includes("automatycz") || lower.includes("auto-buy")
+      purchaseBy: deadline,
+      sellerPolicy: { allowResellers: !(lower.includes("no reseller") || lower.includes("without reseller")) },
+      autonomy: lower.includes("auto-buy") || lower.includes("auto buy") || lower.includes("automatic")
         ? "AUTO_BUY_IF_LOW_STOCK"
-        : lower.includes("zapytaj") || lower.includes("ask")
+        : lower.includes("ask")
           ? "ASK_BEFORE_BUY"
           : "ALERT_ONLY",
       ambiguities,
     });
+    return applyStructuralOverrides(draft, input);
   }
 }
 
@@ -57,26 +60,45 @@ export class OpenAIMandateCompiler implements MandateCompiler {
       const response = await this.client.responses.parse({
         model: this.model,
         instructions:
-          "Wyodrębnij wyłącznie mandat zakupowy. Nie licz kosztów i nie podejmuj decyzji zakupowej. " +
-          "Gdy brakuje rozmiaru albo limitu całkowitego, ustaw null i dodaj ambiguity. " +
-          "Rozmiar buta zapisuj w kanonicznym formacie EU, na przykład 'EU 43'. " +
-          "Nie zgaduj brakujących warunków.",
+          "Extract only the purchase mandate. Do not compute costs and do not make a purchase decision. " +
+          "When the size or the total spending cap is missing, set it to null and add an ambiguity. " +
+          "Write shoe sizes in the canonical EU format, for example 'EU 43'. " +
+          "If the brief mentions a purchase deadline, set purchaseBy to that date in ISO format (YYYY-MM-DD); otherwise set purchaseBy to null. " +
+          "If the request contains structural maxTotal or purchaseBy values, use them verbatim - they win over the brief. " +
+          "Do not guess missing constraints. Always answer and phrase ambiguity questions in English.",
         input: JSON.stringify(input),
         text: { format: zodTextFormat(MandateDraftSchema, "mandate_draft") },
       });
       if (!response.output_parsed) {
-        throw new ApiError(422, "MANDATE_COMPILER_REFUSED", "Model nie zwrócił mandatu zgodnego ze schematem.");
+        throw new ApiError(422, "MANDATE_COMPILER_REFUSED", "The model did not return a mandate matching the schema.");
       }
       const parsed = MandateDraftSchema.parse(response.output_parsed);
-      return MandateDraftSchema.parse({
+      const draft = MandateDraftSchema.parse({
         ...parsed,
         product: { ...parsed.product, size: normalizeSize(parsed.product.size) },
       });
+      return applyStructuralOverrides(draft, input);
     } catch (error) {
       if (error instanceof ApiError) throw error;
-      throw new ApiError(503, "MANDATE_COMPILER_UNAVAILABLE", "Kompilator mandatu jest chwilowo niedostępny.");
+      throw new ApiError(503, "MANDATE_COMPILER_UNAVAILABLE", "The mandate compiler is temporarily unavailable.");
     }
   }
+}
+
+/** Structural request fields always win over anything parsed or extracted from the brief. */
+function applyStructuralOverrides(draft: MandateDraft, input: CompileMandateRequest): MandateDraft {
+  let next = draft;
+  if (input.maxTotal) {
+    next = {
+      ...next,
+      maxTotal: input.maxTotal,
+      ambiguities: next.ambiguities.filter((ambiguity) => ambiguity.field !== "maxTotal"),
+    };
+  }
+  if (input.purchaseBy !== undefined) {
+    next = { ...next, purchaseBy: input.purchaseBy };
+  }
+  return MandateDraftSchema.parse(next);
 }
 
 function normalizeSize(size: string | null): string | null {

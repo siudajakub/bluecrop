@@ -2,7 +2,9 @@ import type {
   CompileMandateResponse,
   Currency,
   Decision,
+  ListReceiptsResponse,
   Mandate,
+  Money,
   Receipt,
   RunEvent,
 } from "@deal-hunter/contracts";
@@ -45,14 +47,21 @@ async function request<T>(path: string, init?: RequestInit, acceptedErrors: numb
   if (!response.ok && !acceptedErrors.includes(response.status)) {
     throw new ApiClientError(
       data.error?.code ?? "REQUEST_FAILED",
-      data.error?.message ?? `Żądanie zakończyło się statusem ${response.status}.`,
+      data.error?.message ?? `Request failed with status ${response.status}.`,
       data.error?.reasonCodes,
     );
   }
   return data;
 }
 
-export type CompileMandateOptions = { baseCurrency?: Currency; destinationCountry?: string };
+export type CompileMandateOptions = {
+  baseCurrency?: Currency;
+  destinationCountry?: string;
+  /** Structural budget cap; the backend prefers it over anything parsed from the brief. */
+  maxTotal?: Money;
+  /** Structural purchase deadline (ISO date) or null for "buy now"; omit to let the brief decide. */
+  purchaseBy?: string | null;
+};
 
 export function compileMandate(brief: string, options: CompileMandateOptions = {}) {
   return request<CompileMandateResponse>(
@@ -63,6 +72,8 @@ export function compileMandate(brief: string, options: CompileMandateOptions = {
         brief,
         baseCurrency: options.baseCurrency ?? "EUR",
         destinationCountry: options.destinationCountry ?? "PL",
+        ...(options.maxTotal ? { maxTotal: options.maxTotal } : {}),
+        ...(options.purchaseBy !== undefined ? { purchaseBy: options.purchaseBy } : {}),
       }),
     },
     [422],
@@ -114,6 +125,10 @@ export function checkoutDecision(decision: Decision, idempotencyKey: string) {
 
 export function getReceipt(receiptId: string) {
   return request<Receipt>(`/api/receipts/${receiptId}`);
+}
+
+export function listReceipts() {
+  return request<ListReceiptsResponse>("/api/receipts");
 }
 
 export function getEvalSummary() {
