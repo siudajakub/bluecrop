@@ -5,7 +5,7 @@ import { buildApp } from "../apps/api/src/app.js";
 import { loadConfig } from "../apps/api/src/config.js";
 import { FixtureMandateCompiler } from "../apps/api/src/services/mandate-compiler.js";
 import type { OfferScraper } from "../apps/api/src/services/offer-scraper.js";
-import { hasExplicitBudget } from "../apps/api/src/services/product-interviewer.js";
+import { hasExplicitBudget, hasExplicitTiming } from "../apps/api/src/services/product-interviewer.js";
 
 const brief = "Nike Dunk Low, size 43, new, no resellers, maximum 80 EUR with delivery, auto-buy on low stock";
 
@@ -39,9 +39,9 @@ describe("Deal Hunter API", () => {
     });
     expect(first.statusCode).toBe(200);
     expect(first.json()).toMatchObject({ status: "QUESTION", interviewer: "fixture", brief: null });
-    expect(first.json().assistantMessage).toContain("budżet");
+    expect(first.json().assistantMessage).toContain("essential accessories");
     expect(first.json().options.length).toBeGreaterThanOrEqual(2);
-    expect(first.json()).toMatchObject({ questionNumber: 1, maxQuestions: 4 });
+    expect(first.json()).toMatchObject({ questionNumber: 1, maxQuestions: null });
 
     const ready = await app.inject({
       method: "POST",
@@ -49,7 +49,7 @@ describe("Deal Hunter API", () => {
       payload: { messages: [
         { role: "user", content: "Chcę nauczyć się grać na gitarze" },
         { role: "assistant", content: first.json().assistantMessage },
-        { role: "user", content: "Do 1500 PLN z dostawą, nowa, chcę kupić w tym miesiącu" },
+        { role: "user", content: "Guitar only. Do 1500 PLN z dostawą, nowa, chcę kupić teraz" },
       ] },
     });
     expect(ready.statusCode).toBe(200);
@@ -63,7 +63,7 @@ describe("Deal Hunter API", () => {
       payload: { plan: ready.json().plan, destinationCountry: "PL" },
     });
     expect(search.statusCode).toBe(200);
-    expect(search.json()).toMatchObject({ searcher: "fixture", searchedCategories: ["Produkt główny"] });
+    expect(search.json()).toMatchObject({ searcher: "fixture", searchedCategories: ["Main product"] });
     expect(search.json().recommendations).toHaveLength(1);
     expect(search.json().recommendations[0].imageUrl).toBeNull();
   });
@@ -71,9 +71,18 @@ describe("Deal Hunter API", () => {
   it("does not mistake a product description for an explicit budget", () => {
     expect(hasExplicitBudget("Chcę kupić gitarę")).toBe(false);
     expect(hasExplicitBudget("Gitara do 1500 PLN z dostawą")).toBe(true);
+    expect(hasExplicitBudget("Electric guitar up to PLN 1500 including delivery")).toBe(true);
   });
 
-  it("forces a plan after the hard interview question limit", async () => {
+  it("recognizes every buy-now and wait-for-price option without asking in a loop", () => {
+    expect(hasExplicitTiming("I choose BUY NOW. Find the best matching offer available now within my budget.")).toBe(true);
+    expect(hasExplicitTiming("Buy the best matching offer now within my budget.")).toBe(true);
+    expect(hasExplicitTiming("I choose WAIT FOR THE RIGHT PRICE within my budget.")).toBe(true);
+    expect(hasExplicitTiming("Find it later when there is a better deal")).toBe(true);
+    expect(hasExplicitTiming("BUY_NOW")).toBe(true);
+  });
+
+  it("continues the interview without fabricating a plan after an arbitrary number of turns", async () => {
     const messages = [{ role: "user", content: "Szukam produktu do nowego hobby" }];
     for (let index = 0; index < 4; index += 1) {
       messages.push({ role: "assistant", content: `Pytanie ${index + 1}` });
@@ -81,8 +90,7 @@ describe("Deal Hunter API", () => {
     }
     const response = await app.inject({ method: "POST", url: "/api/interviews/respond", payload: { messages } });
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toMatchObject({ status: "READY", options: [], maxQuestions: 4 });
-    expect(response.json().plan).not.toBeNull();
+    expect(response.json()).toMatchObject({ status: "QUESTION", maxQuestions: null, plan: null });
   });
 
   it("keeps the realtime API key server-side and reports missing configuration", async () => {

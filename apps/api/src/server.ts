@@ -5,6 +5,7 @@ import { FixtureProductInterviewer, OpenAIProductInterviewer } from "./services/
 import { FixtureProductSearcher, OpenAIProductSearcher } from "./services/product-searcher.js";
 import { SafeHtmlOfferPageEnricher } from "./services/offer-page-enricher.js";
 import { OpenAIOfferScraper } from "./services/offer-scraper.js";
+import { CatalogAndWebProductSearcher } from "./services/catalog-product-searcher.js";
 
 const config = loadConfig();
 if (config.compilerMode === "openai" && !config.openAIApiKey) {
@@ -26,7 +27,7 @@ const pageEnricher = config.offerEnrichmentMode === "html"
     })
   : undefined;
 const searcher = config.compilerMode === "openai"
-  ? new OpenAIProductSearcher(config.openAIApiKey!, config.openAIModel, pageEnricher)
+  ? new CatalogAndWebProductSearcher(new OpenAIProductSearcher(config.openAIApiKey!, config.openAIModel, pageEnricher))
   : new FixtureProductSearcher();
 const offerScraper = config.offerScraperMode === "openai"
   ? new OpenAIOfferScraper({

@@ -1,5 +1,6 @@
 "use client";
 import React from 'react';
+import BlurText from './blur-text';
 import type {
   CanonicalOffer,
   CompileMandateResponse,
@@ -18,23 +19,40 @@ export type ChatMessage =
   | { id: string; sender: 'bot'; kind: 'offer'; offer: CanonicalOffer }
   | { id: string; sender: 'bot'; kind: 'decision'; decision: Decision }
   | { id: string; sender: 'bot'; kind: 'receipt'; receipt: Receipt }
-  | { id: string; sender: 'bot'; kind: 'trace'; sources: number; categories: string[] }
+  | { id: string; sender: 'bot'; kind: 'searching' }
+  | { id: string; sender: 'bot'; kind: 'trace'; sources: number; categories: string[]; sourceLabels: string[]; catalogMatches: number; webMatches: number; rejected: number }
   | { id: string; sender: 'bot'; kind: 'recommendations'; items: ProductRecommendation[] };
 
 export function formatMoney(money: Money) {
   return new Intl.NumberFormat('en', { style: 'currency', currency: money.currency }).format(money.amountMinor / 100);
 }
 
-export function SearchTrace({ sources, categories }: { sources: number; categories: string[] }) {
+export function SearchingCard() {
+  const phrases = [
+    'Searching verified sources…',
+    'Comparing prices in your currency…',
+    'Checking delivery estimates…',
+    'Filtering mismatched products…',
+    'Ranking the safest offers…',
+  ];
+  const [phrase, setPhrase] = React.useState(0);
+  React.useEffect(() => {
+    const timer = window.setInterval(() => setPhrase(value => (value + 1) % phrases.length), 2400);
+    return () => window.clearInterval(timer);
+  }, [phrases.length]);
+  return <div className="searching-card"><span className="radar"><i /></span><div><BlurText key={phrase} text={phrases[phrase] ?? phrases[0]!} className="searching-blur-text" delay={35} animateBy="words" direction="top" /><small>Scraper catalog · stores · OpenAI web search</small></div><span className="searching-dots"><i /><i /><i /></span></div>;
+}
+
+export function SearchTrace({ sources, categories, sourceLabels, catalogMatches, webMatches, rejected }: { sources: number; categories: string[]; sourceLabels: string[]; catalogMatches: number; webMatches: number; rejected: number }) {
   return (
     <div className="search-trace">
       <div className="trace-heading"><span className="trace-orb" /><div><strong>Search complete</strong><small>Transparent activity log · not private model reasoning</small></div></div>
-      <div className="trace-stats"><div><strong>{sources}</strong><span>sources checked</span></div><div><strong>{categories.length}</strong><span>categories</span></div><div><strong>2</strong><span>risks blocked</span></div></div>
+      <div className="trace-stats"><div><strong>{sources}</strong><span>offers checked</span></div><div><strong>{catalogMatches + webMatches}</strong><span>matches</span></div><div><strong>{rejected}</strong><span>filtered out</span></div></div>
       <div className="trace-timeline">
         <div className="done"><i>✓</i><span><strong>Intent understood</strong><small>{categories.join(' · ')}</small></span></div>
-        <div className="done"><i>✓</i><span><strong>Offers compared</strong><small>Price, delivery, variant and seller trust</small></span></div>
-        <div className="blocked"><i>!</i><span><strong>2 unsafe offers rejected</strong><small>Currency trap · fake discount</small></span></div>
-        <div className="done"><i>✓</i><span><strong>Best match verified</strong><small>Total stays inside your approved budget</small></span></div>
+        <div className="done"><i>✓</i><span><strong>Combined {sourceLabels.length} sources</strong><small>{sourceLabels.join(' · ')}</small></span></div>
+        <div className="blocked"><i>!</i><span><strong>Irrelevant results removed</strong><small>{rejected} records did not match the product or variant</small></span></div>
+        <div className="done"><i>✓</i><span><strong>Finalists compared</strong><small>Price, delivery, variant and seller trust</small></span></div>
       </div>
     </div>
   );
@@ -118,7 +136,7 @@ export function MandateCard({
         )}
         {mandate.status === 'APPROVED' && (
           <button type="button" className="card-btn danger" onClick={onRevoke} disabled={busy}>
-            {busy ? 'Revoking…' : 'Revoke mandate'}
+            {busy ? 'Searching…' : 'Revoke mandate'}
           </button>
         )}
         {mandate.status === 'REVOKED' && <small className="chat-card-note">This mandate has been revoked.</small>}
@@ -241,30 +259,37 @@ export function ReceiptCard({ receipt, tracking = false }: { receipt: Receipt; t
   );
 }
 
-export function RecommendationList({ items }: { items: ProductRecommendation[] }) {
+export function RecommendationList({ items, onPay }: { items: ProductRecommendation[]; onPay: (item: ProductRecommendation) => void }) {
+  const [activeIndex, setActiveIndex] = React.useState(0);
+  const item = items[activeIndex];
+  if (!item) return null;
   return (
-    <div className="chat-card recommendations">
+    <div className="chat-card recommendations recommendation-carousel">
       <div className="chat-card-header">
-        <span className="status-pill approved">LIVE OFFERS</span>
-        <small>{items.length} product page{items.length === 1 ? '' : 's'} found on the web</small>
+        <span className="status-pill approved">{activeIndex === 0 ? 'TOP PICK' : 'SHORTLIST'}</span>
+        <small>{activeIndex + 1} of {items.length}</small>
       </div>
-      <p className="chat-card-copy">Confirm price and availability with the seller before buying.</p>
-      <div className="recommendation-items">
-        {items.map((item) => (
-          <div className="recommendation-item" key={`${item.url}-${item.name}`}>
-            <img className="recommendation-image" src={item.imageUrl ?? '/images/guitar-starter-kit.png'} alt="" />
+      <p className="chat-card-copy">{activeIndex === 0 ? 'This is my best match for your requirements.' : 'Another verified option from your shortlist.'}</p>
+      <div className="recommendation-items"><div className="recommendation-item featured" key={`${item.url}-${item.name}`}>
+            <img className="recommendation-image" src={item.imageUrl ?? '/images/guitar-starter-kit.png'} alt={item.name} />
             <div className="recommendation-item-main">
               <strong>{item.name}</strong>
               <span>{item.category} · {item.seller}</span>
+              <span className="delivery-line">◷ {item.deliveryEstimate ?? 'Termin dostawy do potwierdzenia'}</span>
               <p>{item.whyItFits}</p>
               {item.tradeoffs.length > 0 && <small>Check first: {item.tradeoffs.join(' · ')}</small>}
             </div>
             <div className="recommendation-item-side">
               <strong>{item.price}</strong>
               <a href={item.url} target="_blank" rel="noreferrer">View offer ↗</a>
+              <button type="button" className="result-pay-btn" onClick={() => onPay(item)}><span className="apple-mark"></span> Pay</button>
             </div>
           </div>
-        ))}
+      </div>
+      <div className="carousel-controls">
+        <button type="button" onClick={() => setActiveIndex(index => (index - 1 + items.length) % items.length)} aria-label="Previous offer">←</button>
+        <div>{items.map((_, index) => <button key={index} type="button" className={index === activeIndex ? 'active' : ''} onClick={() => setActiveIndex(index)} aria-label={`Show offer ${index + 1}`} />)}</div>
+        <button type="button" onClick={() => setActiveIndex(index => (index + 1) % items.length)} aria-label="Next offer">→</button>
       </div>
     </div>
   );

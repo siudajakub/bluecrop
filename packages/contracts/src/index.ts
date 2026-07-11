@@ -67,7 +67,7 @@ export const InterviewMessageSchema = z.object({
 export type InterviewMessage = z.infer<typeof InterviewMessageSchema>;
 
 export const InterviewRequestSchema = z.object({
-  messages: z.array(InterviewMessageSchema).min(1).max(40),
+  messages: z.array(InterviewMessageSchema).min(1),
   baseCurrency: CurrencySchema.default("EUR"),
   destinationCountry: z.string().length(2).default("PL"),
 });
@@ -101,7 +101,7 @@ export const InterviewResponseSchema = z.object({
   status: z.enum(["QUESTION", "READY"]),
   options: z.array(z.object({ label: z.string().min(1), value: z.string().min(1) })).max(5),
   questionNumber: z.number().int().min(0),
-  maxQuestions: z.number().int().positive(),
+  maxQuestions: z.number().int().positive().nullable(),
   brief: z.string().min(8).nullable(),
   plan: PurchasePlanSchema.nullable(),
   interviewer: z.enum(["openai", "fixture"]),
@@ -124,12 +124,14 @@ export const ProductRecommendationSchema = z.object({
   imageUrl: z.string().regex(/^https?:\/\//).nullable(),
   whyItFits: z.string().min(1),
   tradeoffs: z.array(z.string()),
+  deliveryEstimate: z.string().min(1).nullable().optional(),
 });
 export type ProductRecommendation = z.infer<typeof ProductRecommendationSchema>;
 
 export const ProductSearchRequestSchema = z.object({
   plan: PurchasePlanSchema,
   destinationCountry: z.string().length(2).default("PL"),
+  baseCurrency: CurrencySchema.default("PLN"),
 });
 export type ProductSearchRequest = z.infer<typeof ProductSearchRequestSchema>;
 
@@ -137,6 +139,14 @@ export const ProductSearchResponseSchema = z.object({
   recommendations: z.array(ProductRecommendationSchema).min(1).max(8),
   searchedCategories: z.array(z.string()).min(1),
   searcher: z.enum(["openai", "fixture"]),
+  searchActivity: z.object({
+    catalogOffersScanned: z.number().int().nonnegative(),
+    catalogMatches: z.number().int().nonnegative(),
+    webMatches: z.number().int().nonnegative(),
+    sources: z.array(z.string().min(1)),
+    rejectedAsIrrelevant: z.number().int().nonnegative(),
+    withinBudgetMatches: z.number().int().nonnegative().optional(),
+  }).optional(),
 });
 export type ProductSearchResponse = z.infer<typeof ProductSearchResponseSchema>;
 

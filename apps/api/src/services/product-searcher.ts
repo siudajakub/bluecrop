@@ -22,7 +22,7 @@ export class OpenAIProductSearcher implements ProductSearcher {
   private readonly client: OpenAI;
 
   constructor(apiKey: string, private readonly model: string, private readonly pageEnricher?: OfferPageEnricher) {
-    this.client = new OpenAI({ apiKey, timeout: 45_000, maxRetries: 1 });
+    this.client = new OpenAI({ apiKey, timeout: 25_000, maxRetries: 0 });
   }
 
   async search(input: ProductSearchRequest, attempt = 0): Promise<Omit<ProductSearchResponse, "searcher">> {
@@ -43,6 +43,8 @@ export class OpenAIProductSearcher implements ProductSearcher {
           "Wyszukaj aktualnie dostępne produkty dla każdej wymaganej kategorii planu. " +
           "Podawaj wyłącznie realne produkty znalezione w sieci, z bezpośrednim URL-em źródła/oferty. " +
           "Porównaj je z wymaganymi i preferowanymi parametrami. Nie wymyślaj cen, sprzedawców ani URL-i. " +
+          "Jeśli źródło podaje termin dostawy, zwróć go w deliveryEstimate; w przeciwnym razie ustaw null. " +
+          `Wszystkie prezentowane ceny przelicz i podaj w walucie użytkownika: ${input.baseCurrency}. Zachowaj uczciwość przy przybliżonym kursie. ` +
           "Zwróć 3-6 najlepszych propozycji łącznie, uwzględniając konieczne kategorie uzupełniające. Odpowiadaj po polsku.",
         input: JSON.stringify(input),
         text: { format: zodTextFormat(SearchResultSchema, "product_search_results") },

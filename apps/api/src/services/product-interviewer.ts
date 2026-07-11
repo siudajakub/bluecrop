@@ -4,32 +4,32 @@ import { z } from "zod";
 import { PurchasePlanSchema, type InterviewRequest, type InterviewResponse } from "../../../../packages/contracts/src/index.js";
 import { ApiError } from "../errors.js";
 
-export const PRODUCT_INTERVIEW_INSTRUCTIONS = `Jesteś doradcą zakupowym. Prowadzisz krótki, adaptacyjny wywiad przed wyszukiwaniem produktów.
+export const PRODUCT_INTERVIEW_INSTRUCTIONS = `Jesteś doradcą zakupowym. Prowadzisz naturalną, adaptacyjną rozmowę przed wyszukiwaniem produktów. Nie masz limitu pytań, ale każde pytanie musi wnosić nową informację i rozmowa ma być możliwie zwięzła.
 Najpierw zrozum cel użytkownika, a nie tylko nazwę produktu. Pytaj wyłącznie o brakujące informacje, bez których wyniki byłyby bezużyteczne lub wyraźnie nietrafione. Priorytet mają kluczowy wariant produktu, maksymalny pełny koszt z dostawą oraz termin. Preferencje, stan, akcesoria i poziom autonomii przyjmij rozsądnie lub pozostaw elastyczne, jeśli nie są krytyczne dla danego zakupu.
+Ask about money exactly once using a simple question: "How much do you want to spend?" The user's answer is always the hard maximum TOTAL including product price, shipping, fees and delivery. Never ask a separate delivery-budget question, never ask whether delivery is included, and never ask the user to reconfirm the same amount.
 Nie pytaj o rozmiar, jeśli dana kategoria nie ma standardowego parametru rozmiaru. W szczególności przy zakupie gitary nie pytaj o jej rozmiar; jeśli wariant instrumentu ma realne znaczenie, zapytaj najwyżej o typ gitary lub przeznaczenie.
-Zadawaj jedno krótkie pytanie naraz i łącznie najwyżej cztery pytania. Nie pytaj ponownie o informacje już podane. Najpierw doprecyzuj kluczowy wariant i ewentualne akcesoria, potem brakujący budżet, a następnie termin. Gdy cel sugeruje kompletne rozwiązanie, wskaż kategorie uzupełniające, ale nie wciskaj dodatków.
+If the user says they are unsure, asks you to choose, or selects a "most versatile" option, make a sensible default choice, record it as decided, and never ask another question about the same variant dimension.
+Zadawaj jedno krótkie pytanie naraz. Nie pytaj ponownie o informacje już podane. Obowiązuje kolejność: (1) produkt i kluczowy wariant, (2) czy potrzebny jest sam produkt czy także sensowne akcesoria/zestaw, (3) stan nowy/używany, (4) jedna kwota all-in, (5) strategia BUY NOW albo WAIT FOR THE RIGHT PRICE. Pytanie o strategię jest zawsze ostatnim pytaniem. Po odpowiedzi na nie nie wolno zadawać żadnych dalszych pytań — zwróć READY. Gdy cel sugeruje kompletne rozwiązanie, wskaż kategorie uzupełniające, ale nie wciskaj dodatków.
 Na każdym kroku aktualizuj plan: goal, wszystkie poznane parameters oraz categories potrzebne do wyszukiwania. Kategorie wybierasz samodzielnie na podstawie celu. Rozróżniaj kategorię główną od koniecznych elementów całego rozwiązania. Dla każdej kategorii utwórz konkretną query do wyszukiwarki.
-Odpowiadaj w języku, którego używa użytkownik.
-Gdy brakuje danych krytycznych, ustaw status QUESTION i plan null. Pełny budżet i termin są zawsze danymi krytycznymi: nie wolno ustawić READY, dopóki użytkownik nie podał kwoty z walutą oraz terminu albo jednoznacznie powie, że chce kupić teraz / nie ma terminu. Każde pytanie musi być zamknięte: zwróć 2-4 krótkie, rozłączne opcje odpowiedzi pokrywające typowe wybory. Użytkownik może też wpisać własną odpowiedź. Gdy możesz wyszukać sensowne propozycje, zwięźle podsumuj ustalenia i ustaw status READY, zwróć pustą tablicę options. Brief musi wtedy być samodzielnym opisem planu zakupu; nie wymyślaj niepodanych ograniczeń. Plan nie może być null przy READY. Nie rekomenduj jeszcze konkretnego modelu produktu ani sklepu.`;
-
-export const MAX_INTERVIEW_QUESTIONS = 4;
+Always respond in English, even when the user writes in another language. Keep the tone natural, concise and helpful.
+Gdy brakuje danych krytycznych, ustaw status QUESTION i plan null. Konkretna specyfikacja produktu, pełny budżet oraz strategia KUP TERAZ / CZEKAJ NA ODPOWIEDNIĄ CENĘ są zawsze krytyczne. Nie wolno ustawić READY, dopóki użytkownik ich nie poda. Każde pytanie zwraca 2-4 krótkie opcje, ale użytkownik może też wpisać własną odpowiedź. Gdy masz komplet, zwięźle podsumuj ustalenia i ustaw status READY z pustą tablicą options. W brief i planie zapisz strategię zakupu jako wymagany parametr. Brief musi być samodzielnym opisem planu zakupu; nie wymyślaj niepodanych ograniczeń. Plan nie może być null przy READY. Nie rekomenduj jeszcze konkretnego modelu produktu ani sklepu.`;
 
 export const VOICE_INTERVIEW_INSTRUCTIONS = `${PRODUCT_INTERVIEW_INSTRUCTIONS}
-Rozmawiasz z użytkownikiem głosowo. Mów w języku użytkownika; zanim go poznasz, zaczynaj po polsku. Mów naturalnie i zwięźle: maksymalnie dwa krótkie zdania naraz i jedno pytanie naraz. Jeśli rozmowa dopiero się zaczyna, przywitaj się jednym zdaniem i zapytaj, co użytkownik chce osiągnąć. Nie czytaj na głos długich list ani technicznych podsumowań.
-W rozmowie głosowej zadaj łącznie najwyżej ${MAX_INTERVIEW_QUESTIONS} pytania i nie pytaj o poziom autonomii zakupowej, chyba że użytkownik sam poruszy ten temat.
-Gdy znasz już cel, kluczowe wymagania, termin, akceptowany stan produktu i pełny budżet z dostawą, wywołaj narzędzie finalize_purchase_plan z krótkim podsumowaniem ustaleń. Nie pytaj o zgodę na wywołanie narzędzia. Gdy użytkownik powie, że nie ma nic więcej do dodania, poprosi o zakończenie albo odmówi odpowiedzi, natychmiast wywołaj finalize_purchase_plan z najlepszym możliwym podsumowaniem zamiast ponawiać pytanie. Jeśli narzędzie odpowie, że brakuje danych, zadaj użytkownikowi dokładnie wskazane pytanie.`;
+You are speaking with the user. Always speak English. Use at most two short sentences and ask one question at a time. At the beginning, greet the user briefly and ask what they want to buy. Do not read long lists or technical summaries aloud.
+Nie pytaj o techniczny poziom autonomii. Zapytaj naturalnie, czy kupić teraz, czy czekać na odpowiednią cenę.
+Gdy znasz już konkretny produkt i wariant, strategię zakupu oraz pełny budżet z dostawą, wywołaj narzędzie finalize_purchase_plan z krótkim podsumowaniem ustaleń. Nie pytaj o zgodę na wywołanie narzędzia. Jeśli narzędzie odpowie, że brakuje danych, zadaj użytkownikowi dokładnie wskazane pytanie.`;
 
 export const VOICE_FINALIZE_TOOL = {
   type: "function",
   name: "finalize_purchase_plan",
   description:
-    "Wywołaj, gdy wywiad zakupowy jest kompletny: znasz cel, kluczowe wymagania, termin, akceptowany stan produktu i pełny budżet z dostawą. Narzędzie kompiluje plan zakupu i uruchamia wyszukiwanie produktów.",
+    "Call when the shopping interview is complete: product, key variant, buy-now or wait-for-price strategy, condition, and full delivered budget are known.",
   parameters: {
     type: "object",
     properties: {
       summary: {
         type: "string",
-        description: "Zwięzłe podsumowanie ustaleń po polsku: cel, wymagania, termin, stan produktu i pełny budżet z dostawą.",
+        description: "Concise English summary: product, requirements, purchase strategy, condition, and full delivered budget.",
       },
     },
     required: ["summary"],
@@ -61,29 +61,50 @@ export class OpenAIProductInterviewer implements ProductInterviewer {
   async respond(input: InterviewRequest): Promise<Omit<InterviewResponse, "interviewer">> {
     try {
       const questionsAsked = input.messages.filter((message) => message.role === "assistant").length;
-      const mustFinish = questionsAsked >= MAX_INTERVIEW_QUESTIONS;
+      const userMessages = input.messages.filter((message) => message.role === "user");
+      const allUserText = userMessages.map((message) => message.content).join(" ");
+      const userProvidedBudget = userMessages.some((message) => hasExplicitBudget(message.content));
+      const userProvidedTiming = userMessages.some((message) => hasExplicitTiming(message.content));
+      const accessoryDecisionKnown = hasAccessoryDecision(allUserText);
+      const conditionKnown = hasConditionDecision(allUserText);
+      const knownFacts = `\nSERVER-VERIFIED FACTS: user's selected currency is ${input.baseCurrency}; accessory/setup choice ${accessoryDecisionKnown ? "IS already known" : "is missing"}; condition choice ${conditionKnown ? "IS already known" : "is missing"}; total budget including every delivery cost ${userProvidedBudget ? "IS already known" : "is missing"}; purchase strategy ${userProvidedTiming ? "IS already known and MUST be the final answer" : "is missing"}. Any amount stated by the user is automatically the hard delivered-total cap. Discuss and summarize all money in ${input.baseCurrency}. Never ask again for a fact marked as already known and never ask separately about delivery cost.`;
       const response = await this.client.responses.parse({
         model: this.model,
-        instructions: PRODUCT_INTERVIEW_INSTRUCTIONS + (mustFinish
-          ? " Osiągnięto twardy limit pytań. Musisz teraz zwrócić status READY i najlepszy możliwy kompletny plan na podstawie dostępnych danych. Nie zadawaj kolejnego pytania."
-          : ` Możesz zadać jeszcze maksymalnie ${MAX_INTERVIEW_QUESTIONS - questionsAsked} pytania.`),
+        instructions: PRODUCT_INTERVIEW_INSTRUCTIONS + knownFacts,
         input: input.messages,
         reasoning: { effort: "none" },
         text: { format: zodTextFormat(TurnSchema, "product_interview_turn") },
       });
       if (!response.output_parsed) throw new Error("missing parsed output");
       const turn = TurnSchema.parse(response.output_parsed);
-      const userProvidedBudget = input.messages
-        .filter((message) => message.role === "user")
-        .some((message) => hasExplicitBudget(message.content));
-      const userProvidedTiming = input.messages
-        .filter((message) => message.role === "user")
-        .some((message) => hasExplicitTiming(message.content));
-      if (turn.status === "READY" && (!userProvidedBudget || !userProvidedTiming)) {
+      const triesToCloseInterview = turn.status === "READY" || /budget|spend|buy\s*[_ -]?now|wait|right price/i.test(turn.assistantMessage);
+      if (triesToCloseInterview && !accessoryDecisionKnown) {
+        return {
+          status: "QUESTION", brief: null, plan: null, questionNumber: questionsAsked + 1, maxQuestions: null,
+          assistantMessage: "Do you want the product only, or should I include the essential accessories as a complete starter setup?",
+          options: [
+            { label: "Product only", value: "I want the product only, without extra accessories." },
+            { label: "Complete starter setup", value: "I want a complete starter setup with the essential accessories." },
+            { label: "Show both routes", value: "Compare the product-only option with a complete starter setup." },
+          ],
+        };
+      }
+      if (triesToCloseInterview && !conditionKnown) {
+        return {
+          status: "QUESTION", brief: null, plan: null, questionNumber: questionsAsked + 1, maxQuestions: null,
+          assistantMessage: "Should it be new, or is a used product in good condition acceptable?",
+          options: [
+            { label: "New only", value: "The product must be new." },
+            { label: "Used is fine", value: "A used product in good condition is acceptable." },
+            { label: "Either", value: "New or used is fine; prioritize the best value." },
+          ],
+        };
+      }
+      if (userProvidedTiming && userProvidedBudget && accessoryDecisionKnown && conditionKnown && turn.status === "QUESTION") {
         return this.fallback.respond(input);
       }
-      if (mustFinish && turn.status !== "READY") {
-        throw new ApiError(422, "INTERVIEW_LIMIT_INVALID", "Model nie zakończył wywiadu po osiągnięciu limitu pytań.");
+      if (turn.status === "READY" && (!userProvidedBudget || !userProvidedTiming)) {
+        return this.fallback.respond(input);
       }
       if (turn.status === "READY" && (!turn.plan || !turn.brief)) {
         throw new ApiError(422, "INTERVIEW_RESULT_INVALID", "Model zakończył wywiad bez kompletnego planu zakupu.");
@@ -98,7 +119,7 @@ export class OpenAIProductInterviewer implements ProductInterviewer {
         brief: turn.status === "QUESTION" ? null : turn.brief,
         plan: turn.status === "QUESTION" ? null : turn.plan,
         questionNumber: turn.status === "QUESTION" ? questionsAsked + 1 : questionsAsked,
-        maxQuestions: MAX_INTERVIEW_QUESTIONS,
+        maxQuestions: null,
       };
     } catch (error) {
       if (error instanceof ApiError && error.statusCode === 422) throw error;
@@ -114,32 +135,43 @@ export class FixtureProductInterviewer implements ProductInterviewer {
     const userText = input.messages.filter((message) => message.role === "user").map((message) => message.content).join(" ");
     const lower = userText.toLocaleLowerCase();
     const hasBudget = hasExplicitBudget(userText);
-    const hasTiming = /(?:dziś|jutro|tygod|miesią|do\s+\w+|nie spieszy)/i.test(userText);
-    const hasCondition = /(?:now|używan)/i.test(userText);
+    const hasTiming = hasExplicitTiming(userText);
+    const hasCondition = hasConditionDecision(userText);
+    const hasAccessories = hasAccessoryDecision(userText);
     const questionsAsked = input.messages.filter((message) => message.role === "assistant").length;
-    if (!hasBudget && questionsAsked < MAX_INTERVIEW_QUESTIONS) return { status: "QUESTION", options: [{ label: "Do 500 zł", value: "Mój pełny budżet to 500 PLN z dostawą." }, { label: "Do 1500 zł", value: "Mój pełny budżet to 1500 PLN z dostawą." }, { label: "Do 3000 zł", value: "Mój pełny budżet to 3000 PLN z dostawą." }], questionNumber: questionsAsked + 1, maxQuestions: MAX_INTERVIEW_QUESTIONS, brief: null, plan: null, assistantMessage: "Jaki jest maksymalny budżet łącznie z dostawą?" };
-    if ((!hasTiming || !hasCondition) && questionsAsked < MAX_INTERVIEW_QUESTIONS) return { status: "QUESTION", options: [{ label: "Nowy, w tym miesiącu", value: "Produkt ma być nowy i chcę kupić w tym miesiącu." }, { label: "Używany, bez pośpiechu", value: "Dopuszczam produkt używany i nie spieszy mi się." }, { label: "Oba warianty", value: "Dopuszczam nowy lub używany produkt, zależnie od opłacalności." }], questionNumber: questionsAsked + 1, maxQuestions: MAX_INTERVIEW_QUESTIONS, brief: null, plan: null, assistantMessage: "Kiedy chcesz kupić i jaki stan produktu dopuszczasz?" };
+    if (!hasAccessories) return { status: "QUESTION", options: [{ label: "Product only", value: "I want the product only, without extra accessories." }, { label: "Complete starter setup", value: "I want a complete starter setup with the essential accessories." }, { label: "Show both routes", value: "Compare the product-only option with a complete starter setup." }], questionNumber: questionsAsked + 1, maxQuestions: null, brief: null, plan: null, assistantMessage: "Do you want the product only, or should I include the essential accessories as a complete starter setup?" };
+    if (!hasCondition) return { status: "QUESTION", options: [{ label: "New only", value: "The product must be new." }, { label: "Used is fine", value: "A used product in good condition is acceptable." }, { label: "Either", value: "Condition is flexible; prioritize the best offer." }], questionNumber: questionsAsked + 1, maxQuestions: null, brief: null, plan: null, assistantMessage: "Should the product be new, or is used acceptable?" };
+    if (!hasBudget) return { status: "QUESTION", options: [500, 1500, 3000].map(amount => ({ label: `Up to ${input.baseCurrency} ${amount.toLocaleString("en")}`, value: `I want to spend up to ${input.baseCurrency} ${amount}.` })), questionNumber: questionsAsked + 1, maxQuestions: null, brief: null, plan: null, assistantMessage: `How much do you want to spend, in ${input.baseCurrency}?` };
+    if (!hasTiming) return { status: "QUESTION", options: [{ label: "Buy now", value: "I choose BUY NOW. Find the best matching offer available now within my budget." }, { label: "Wait for the right price", value: "I choose WAIT FOR THE RIGHT PRICE within my budget." }], questionNumber: questionsAsked + 1, maxQuestions: null, brief: null, plan: null, assistantMessage: "Should I find the best offer to buy now, or wait for the right price?" };
     return {
       status: "READY",
       options: [],
       questionNumber: questionsAsked,
-      maxQuestions: MAX_INTERVIEW_QUESTIONS,
+      maxQuestions: null,
       brief: userText,
       plan: {
         goal: userText.split(". ")[0] ?? userText,
         summary: userText,
         parameters: [{ name: "Ustalenia", value: userText, priority: "REQUIRED" }],
-        categories: [{ name: "Produkt główny", purpose: "Realizacja celu użytkownika", required: true, query: userText }],
+        categories: [{ name: "Main product", purpose: "Fulfil the user's purchase goal", required: true, query: userText }],
       },
-      assistantMessage: "Mam komplet najważniejszych ustaleń. Rozpoczynam wyszukiwanie dopasowanych produktów.",
+      assistantMessage: "I have everything I need. Review and approve the draft mandate when you are ready for me to start hunting.",
     };
   }
 }
 
 export function hasExplicitBudget(text: string): boolean {
-  return /(?:do|budżet|budget|limit|maksymalnie|max(?:imum)?|up to)\D{0,40}\d[\d\s]*(?:[.,]\d{1,2})?\s*(?:pln|eur|usd|gbp|zł)|\d[\d\s]*(?:[.,]\d{1,2})?\s*(?:pln|eur|usd|gbp|zł)/i.test(text);
+  return /(?:do|budżet|budget|limit|maksymalnie|max(?:imum)?|up to)\D{0,40}\d[\d\s]*(?:[.,]\d{1,2})?\s*(?:pln|eur|usd|gbp|zł)|\d[\d\s]*(?:[.,]\d{1,2})?\s*(?:pln|eur|usd|gbp|zł)|(?:pln|eur|usd|gbp|zł)\s*\d[\d\s]*(?:[.,]\d{1,2})?/i.test(text);
 }
 
 export function hasExplicitTiming(text: string): boolean {
-  return /(?:dziś|jutro|teraz|od razu|bez terminu|nie spieszy|tygod|miesią|do\s+\d{1,2}[.\/-]\d{1,2}|today|tomorrow|now|no deadline|week|month)/i.test(text);
+  return /(?:dziś|jutro|teraz|od razu|kup\s+teraz|czek|odpowiedni[aą]\s+cen|dobra\s+cen|bez terminu|nie spieszy|today|tomorrow|buy[\s_-]*(?:it[\s_-]*)?now|buy[^.!?]{0,50}\bnow\b|offer\s+now|purchase\s+now|wait(?:ing)?[^.!?]{0,50}(?:price|deal)|right\s+price|find[^.!?]{0,20}\blater\b|no deadline)/i.test(text);
+}
+
+export function hasAccessoryDecision(text: string): boolean {
+  return /(?:product|guitar|item)\s+only|without\s+(?:extra\s+)?accessor|complete\s+(?:starter\s+)?setup|starter\s+(?:kit|bundle|setup)|essential\s+accessor|show\s+both\s+routes|compare[^.!?]{0,30}(?:setup|accessor)|gig\s+bag|tuner|amplifier|\bamp\b|cable/i.test(text);
+}
+
+export function hasConditionDecision(text: string): boolean {
+  return /(?:must\s+be\s+new|new\s+only|used\s+(?:is\s+)?(?:fine|acceptable)|new\s+or\s+used|condition\s+is\s+flexible|stan|nowy|nowa|nowe|używan)/i.test(text);
 }

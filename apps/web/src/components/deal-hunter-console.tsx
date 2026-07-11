@@ -11,6 +11,7 @@ import type {
   Mandate,
   Money,
   PurchasePlan,
+  ProductRecommendation,
   Receipt,
   RunEvent,
 } from '@deal-hunter/contracts';
@@ -47,6 +48,7 @@ import {
   ReceiptCard,
   RecommendationList,
   SearchTrace,
+  SearchingCard,
   formatMoney,
   type ChatMessage,
 } from './chat-cards';
@@ -72,6 +74,8 @@ interface Chat {
   mutatedOfferIds: string[];
   busy: BusyAction;
   interviewOptions: { label: string; value: string }[];
+  purchasePlan: PurchasePlan | null;
+  waitingForTime: boolean;
 }
 
 function dateAfterDays(days: number) {
@@ -97,9 +101,9 @@ function botError(error: unknown): ChatMessage {
   return { id: uid(), sender: 'bot', kind: 'error', code: 'UNEXPECTED_ERROR', text, reasonCodes: [] };
 }
 
-function compileOptionsFor(context: ShoppingContext) {
+function compileOptionsFor(context: ShoppingContext, preferredCurrency: Currency) {
   return {
-    baseCurrency: context.budget?.currency,
+    baseCurrency: context.budget?.currency ?? preferredCurrency,
     maxTotal: context.budget
       ? { amountMinor: Math.round(context.budget.amount * 100), currency: context.budget.currency }
       : undefined,
@@ -126,12 +130,15 @@ export function DealHunterConsole() {
   const [isPlusPopoverOpen, setIsPlusPopoverOpen] = useState(false);
   const [plusPopoverView, setPlusPopoverView] = useState<'menu' | 'budget' | 'time'>('menu');
   const [budgetAmount, setBudgetAmount] = useState('');
-  const [budgetCurrency, setBudgetCurrency] = useState<Currency>('EUR');
+  const [preferredCurrency, setPreferredCurrency] = useState<Currency>('PLN');
+  const [budgetCurrency, setBudgetCurrency] = useState<Currency>('PLN');
   const [timeChoice, setTimeChoice] = useState<'now' | 'later'>('now');
   const [purchaseDate, setPurchaseDate] = useState('');
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [activeSidebarTab, setActiveSidebarTab] = useState<'chat' | 'purchases'>('chat');
   const [pendingCheckout, setPendingCheckout] = useState<{ chatId: string; decision: Decision } | null>(null);
+  const [selectedOffer, setSelectedOffer] = useState<ProductRecommendation | null>(null);
+  const [mockPaymentComplete, setMockPaymentComplete] = useState(false);
 
   // Welcome message animation states
   const [phraseIndex, setPhraseIndex] = useState(0);
@@ -243,6 +250,15 @@ export function DealHunterConsole() {
     setCurrentChatId(id);
   };
 
+  const handleNewChat = () => {
+    voice.stop();
+    setCurrentChatId(null);
+    setActiveSidebarTab('chat');
+    setDraftContext({});
+    setInputValue('');
+    setIsPlusPopoverOpen(false);
+  };
+
   const createChat = (title: string, messages: ChatMessage[]): Chat => {
     const chat: Chat = {
       id: Date.now().toString(),
@@ -258,6 +274,8 @@ export function DealHunterConsole() {
       mutatedOfferIds: [],
       busy: null,
       interviewOptions: [],
+      purchasePlan: null,
+      waitingForTime: false,
     };
     setChats(prev => [chat, ...prev]);
     setCurrentChatId(chat.id);
@@ -291,6 +309,11 @@ export function DealHunterConsole() {
     }
 
     try {
+      if (chat.waitingForTime) {
+        updateChat(activeId, current => ({ ...current, waitingForTime: false, interviewOptions: [] }));
+        appendMessages(activeId, [botText(`Price watch activated for ${userText}. I’ll keep the approved budget and product requirements unchanged.`)]);
+        return;
+      }
       if (voice.state !== 'idle' && voiceChatIdRef.current === activeId) {
         // An active voice conversation owns the interview: typed answers join it and the reply is spoken.
         pushInterviewEntry(activeId, 'user', userText);
@@ -312,7 +335,7 @@ export function DealHunterConsole() {
   const compileBrief = async (chatId: string, brief: string, context: ShoppingContext) => {
     setChatBusy(chatId, 'compile');
     try {
-      const response = await compileMandate(brief, compileOptionsFor(context));
+      const response = await compileMandate(brief, compileOptionsFor(context, preferredCurrency));
       updateChat(chatId, c => ({
         ...c,
         mandate: response.mandate,
@@ -353,7 +376,7 @@ export function DealHunterConsole() {
     pushInterviewEntry(chatId, 'user', [userText, ...contextHints].join(' '));
     setChatBusy(chatId, 'compile');
     try {
-      const response = await respondToInterview(interviewsRef.current[chatId] ?? []);
+      const response = await respondToInterview(interviewsRef.current[chatId] ?? [], preferredCurrency);
       pushInterviewEntry(chatId, 'assistant', response.assistantMessage);
       appendMessages(chatId, [botText(response.assistantMessage)]);
       if (response.status === 'READY' && response.brief && response.plan) {
@@ -370,21 +393,33 @@ export function DealHunterConsole() {
 
   const finishInterview = async (chatId: string, response: InterviewResponse) => {
     if (!response.brief || !response.plan) return;
-    updateChat(chatId, c => ({ ...c, interviewOptions: [] }));
+    updateChat(chatId, c => ({ ...c, interviewOptions: [], purchasePlan: response.plan }));
     const context = chatsRef.current.find(c => c.id === chatId)?.context ?? {};
     await compileBrief(chatId, response.brief, context);
-    void searchRecommendations(chatId, response.plan);
   };
 
   const searchRecommendations = async (chatId: string, plan: PurchasePlan) => {
-    appendMessages(chatId, [botText("I'm also scanning the web for concrete offers in the meantime…")]);
+    const searchingId = uid();
+    appendMessages(chatId, [{ id: searchingId, sender: 'bot', kind: 'searching' }]);
     try {
-      const results = await searchProducts(plan);
-      appendMessages(chatId, [
-        { id: uid(), sender: 'bot', kind: 'trace', sources: Math.max(results.recommendations.length * 4, 12), categories: results.searchedCategories },
+      const results = await searchProducts(plan, preferredCurrency);
+      const activity = results.searchActivity;
+      updateChat(chatId, chat => ({ ...chat, messages: [
+        ...chat.messages.filter(message => message.id !== searchingId),
+        { id: uid(), sender: 'bot', kind: 'trace', sources: activity?.catalogOffersScanned ?? results.recommendations.length, categories: results.searchedCategories, sourceLabels: activity?.sources ?? ['OpenAI web search'], catalogMatches: activity?.catalogMatches ?? 0, webMatches: activity?.webMatches ?? results.recommendations.length, rejected: activity?.rejectedAsIrrelevant ?? 0 },
         { id: uid(), sender: 'bot', kind: 'recommendations', items: results.recommendations },
-      ]);
+      ] }));
+      const isWaitMode = /wait|right price|price watch|later/i.test(`${plan.summary} ${plan.parameters.map(item => item.value).join(' ')}`);
+      if (results.recommendations.length === 0 && isWaitMode) {
+        appendMessages(chatId, [botText("I couldn't find a verified offer inside your budget right now. How long should I keep watching?")]);
+        updateChat(chatId, chat => ({ ...chat, waitingForTime: true, interviewOptions: [
+          { label: '24 hours', value: 'the next 24 hours' },
+          { label: '7 days', value: 'the next 7 days' },
+          { label: '30 days', value: 'the next 30 days' },
+        ] }));
+      }
     } catch (error) {
+      updateChat(chatId, chat => ({ ...chat, messages: chat.messages.filter(message => message.id !== searchingId) }));
       appendMessages(chatId, [botError(error)]);
     }
   };
@@ -406,7 +441,7 @@ export function DealHunterConsole() {
       };
       setChatBusy(chatId, 'compile');
       try {
-        const response = await respondToInterview([...history, confirmation]);
+        const response = await respondToInterview([...history, confirmation], preferredCurrency);
         if (response.status === 'READY' && response.brief && response.plan) {
           await finishInterview(chatId, response);
           return { kind: 'done' };
@@ -430,7 +465,6 @@ export function DealHunterConsole() {
     },
   });
   const isRecording = voice.state === 'listening';
-  const isAwaitingClosedAnswer = Boolean(currentChat?.interviewOptions.length);
 
   useEffect(() => {
     if (isRecording) {
@@ -445,8 +479,10 @@ export function DealHunterConsole() {
     try {
       const response = await approveMandate(mandate);
       syncMandate(chatId, response.mandate);
-      appendMessages(chatId, [botText("Mandate approved. Starting the monitoring run…")]);
-      await runMonitoring(chatId, response.mandate);
+      const plan = chatsRef.current.find(chat => chat.id === chatId)?.purchasePlan;
+      appendMessages(chatId, [botText("Mandate approved. I’ll now search the catalog, verify live sources, and shortlist one product for you.")]);
+      if (plan) await searchRecommendations(chatId, plan);
+      else appendMessages(chatId, [botText("The purchase plan is missing. Start a new chat so I can collect the requirements again.")]);
     } catch (error) {
       appendMessages(chatId, [botError(error)]);
       setChatBusy(chatId, null);
@@ -760,11 +796,13 @@ export function DealHunterConsole() {
       case 'recommendations':
         return (
           <div key={message.id} className="chat-bubble bot has-card">
-            <RecommendationList items={message.items} />
+            <RecommendationList items={message.items} onPay={(offer) => { setMockPaymentComplete(false); setSelectedOffer(offer); }} />
           </div>
         );
+      case 'searching':
+        return <div key={message.id} className="chat-bubble bot has-card"><SearchingCard /></div>;
       case 'trace':
-        return <div key={message.id} className="chat-bubble bot has-card"><SearchTrace sources={message.sources} categories={message.categories} /></div>;
+        return <div key={message.id} className="chat-bubble bot has-card"><SearchTrace {...message} /></div>;
     }
   };
 
@@ -784,6 +822,10 @@ export function DealHunterConsole() {
 
         <div className="sidebar-content">
           <div className="sidebar-nav">
+            <button className="new-chat-btn" type="button" onClick={handleNewChat}>
+              <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M12 5v14M5 12h14"/></svg>
+              <span>New chat</span>
+            </button>
             <button
               className={`sidebar-nav-btn ${activeSidebarTab === 'chat' ? 'active' : ''}`}
               onClick={() => setActiveSidebarTab('chat')}
@@ -840,6 +882,16 @@ export function DealHunterConsole() {
               ))}
             </div>
           )}
+        </div>
+
+        <div className="sidebar-currency">
+          <label htmlFor="display-currency"><span>Currency</span><small>Conversation and prices</small></label>
+          <select id="display-currency" value={preferredCurrency} onChange={(event) => { const currency = event.target.value as Currency; setPreferredCurrency(currency); setBudgetCurrency(currency); }}>
+            <option value="PLN">PLN · zł</option>
+            <option value="EUR">EUR · €</option>
+            <option value="USD">USD · $</option>
+            <option value="GBP">GBP · £</option>
+          </select>
         </div>
 
         {/* User Panel in Bottom Left */}
@@ -1018,7 +1070,7 @@ export function DealHunterConsole() {
                       <span className="context-option-icon">
                         <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75"><path d="M4 7h16v12H4z"/><path d="M4 10h16"/><circle cx="16" cy="15" r="1"/></svg>
                       </span>
-                      <span><strong>Budget</strong><small>Set your maximum spend</small></span>
+                      <span><strong>Budget</strong><small>Your total including delivery</small></span>
                       <svg className="context-option-arrow" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75"><path d="m9 18 6-6-6-6"/></svg>
                     </button>
                     <button className="context-option" type="button" onClick={() => setPlusPopoverView('time')}>
@@ -1037,7 +1089,7 @@ export function DealHunterConsole() {
                       <button type="button" className="context-back-btn" onClick={() => setPlusPopoverView('menu')} aria-label="Back to context options">
                         <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75"><path d="m15 18-6-6 6-6"/></svg>
                       </button>
-                      <div><strong>Set a budget</strong><small>What is the most you want to spend?</small></div>
+                      <div><strong>Set a budget</strong><small>One total amount, including delivery</small></div>
                     </div>
                     <label className="context-field-label" htmlFor="budget-amount">Maximum amount</label>
                     <div className="money-input">
@@ -1113,7 +1165,7 @@ export function DealHunterConsole() {
                 )}
               </div>
             )}
-            {!isAwaitingClosedAnswer && <form className="chat-input-wrapper" onSubmit={handleSend}>
+            <form className="chat-input-wrapper" onSubmit={handleSend}>
               <button
                 type="button"
                 className="plus-btn has-tooltip"
@@ -1161,13 +1213,29 @@ export function DealHunterConsole() {
               >
                 <ChevronUpIcon ref={sendIconRef} size={20} />
               </button>
-            </form>}
+            </form>
           </div>
         </div>
         </>
         )}
       </main>
       <AnimatePresence>
+        {selectedOffer && (
+          <motion.div className="pay-overlay" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setSelectedOffer(null)}>
+            <motion.div className="apple-pay-sheet" initial={{ y: 32, scale: .97 }} animate={{ y: 0, scale: 1 }} exit={{ y: 24, scale: .98 }} onClick={(event) => event.stopPropagation()}>
+              <div className="pay-sheet-grabber" />
+              <div className="pay-sheet-title"><strong><span className="apple-mark"></span> Pay</strong><button onClick={() => setSelectedOffer(null)} aria-label="Close">×</button></div>
+              {mockPaymentComplete ? <div className="mock-payment-success"><span>✓</span><h3>Payment approved</h3><p>{selectedOffer.name}</p><strong>{selectedOffer.price}</strong><button className="apple-pay-confirm" onClick={() => setSelectedOffer(null)}>Done</button><small>Mock payment · no charge was made</small></div> : <>
+                <div className="pay-product"><img src={selectedOffer.imageUrl ?? '/images/guitar-starter-kit.png'} alt="" /><div><strong>{selectedOffer.name}</strong><span>{selectedOffer.seller} · {selectedOffer.deliveryEstimate ?? 'delivery to confirm'}</span></div><b>{selectedOffer.price}</b></div>
+                <div className="pay-row"><span>Card</span><strong>Visa ···· 4242</strong></div>
+                <div className="pay-row"><span>Ship to</span><strong>Alex Carter · Warsaw</strong></div>
+                <div className="pay-total"><span>Total</span><strong>{selectedOffer.price}</strong></div>
+                <button className="apple-pay-confirm" onClick={() => setMockPaymentComplete(true)}><span className="apple-mark"></span> Pay · mockup</button>
+                <small className="pay-secure">Presentation mockup · your card will not be charged.</small>
+              </>}
+            </motion.div>
+          </motion.div>
+        )}
         {pendingCheckout && (
           <motion.div className="pay-overlay" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setPendingCheckout(null)}>
             <motion.div className="apple-pay-sheet" initial={{ y: 32, scale: .97 }} animate={{ y: 0, scale: 1 }} exit={{ y: 24, scale: .98 }} onClick={(event) => event.stopPropagation()}>

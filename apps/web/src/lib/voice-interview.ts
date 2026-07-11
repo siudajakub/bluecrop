@@ -99,18 +99,18 @@ export function useVoiceInterview(handlers: {
         body: offer.sdp,
         headers: { Authorization: `Bearer ${token.value}`, "Content-Type": "application/sdp" },
       });
-      if (!answerResponse.ok) throw new Error("OpenAI odrzuciło połączenie głosowe.");
+      if (!answerResponse.ok) throw new Error("OpenAI rejected the voice connection.");
       await pc.setRemoteDescription({ type: "answer", sdp: await answerResponse.text() });
     } catch (error) {
       stop();
-      handlersRef.current.onError(error instanceof Error ? error.message : "Nie udało się uruchomić rozmowy głosowej.");
+      handlersRef.current.onError(error instanceof Error ? error.message : "The voice conversation could not be started.");
     }
   }
 
   function seedConversation(history: InterviewMessage[]) {
     if (history.length) {
       const transcript = history
-        .map((message) => `${message.role === "user" ? "Użytkownik" : "Doradca"}: ${message.content}`)
+        .map((message) => `${message.role === "user" ? "User" : "Advisor"}: ${message.content}`)
         .join("\n");
       sendEvent({
         type: "conversation.item.create",
@@ -146,7 +146,7 @@ export function useVoiceInterview(handlers: {
     }
     if (type === "error") {
       const message = (payload.error as { message?: string } | undefined)?.message;
-      handlersRef.current.onError(message ? `Błąd rozmowy głosowej: ${message}` : "Wystąpił błąd podczas rozmowy głosowej.");
+      handlersRef.current.onError(message ? `Voice conversation error: ${message}` : "A voice conversation error occurred.");
     }
   }
 
@@ -168,11 +168,11 @@ export function useVoiceInterview(handlers: {
       const result = await handlersRef.current.onFinalize(summary);
       if (result.kind === "done") {
         finishingRef.current = true;
-        respondToToolCall(callId, "Plan zakupu jest kompletny i został przekazany dalej. Podziękuj użytkownikowi jednym zdaniem i zakończ rozmowę.");
+        respondToToolCall(callId, "The purchase plan is complete. Thank the user in one English sentence and end the conversation.");
       } else if (result.kind === "ask") {
         respondToToolCall(callId, `Brakuje jeszcze danych do planu. Zadaj użytkownikowi dokładnie to pytanie: ${result.question}`);
       } else {
-        respondToToolCall(callId, "Wystąpił błąd techniczny przy kompilowaniu planu. Przeproś jednym zdaniem i spróbuj wywołać narzędzie ponownie po odpowiedzi użytkownika.");
+        respondToToolCall(callId, "A technical error occurred while compiling the plan. Apologize in one English sentence and retry after the user responds.");
       }
     } finally {
       toolBusyRef.current = false;
@@ -195,11 +195,11 @@ async function requestMicrophone(): Promise<MediaStream> {
     return await navigator.mediaDevices.getUserMedia({ audio: true });
   } catch (error) {
     if (error instanceof DOMException && (error.name === "NotAllowedError" || error.name === "PermissionDeniedError")) {
-      throw new Error("Przeglądarka zablokowała mikrofon. Zezwól na dostęp do mikrofonu i spróbuj ponownie.");
+      throw new Error("The browser blocked microphone access. Allow access and try again.");
     }
     if (error instanceof DOMException && error.name === "NotFoundError") {
-      throw new Error("Nie wykryto mikrofonu. Podłącz mikrofon i spróbuj ponownie.");
+      throw new Error("No microphone was detected. Connect one and try again.");
     }
-    throw new Error("Nie udało się uzyskać dostępu do mikrofonu.");
+    throw new Error("Microphone access could not be obtained.");
   }
 }

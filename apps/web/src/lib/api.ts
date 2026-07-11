@@ -85,10 +85,10 @@ export function compileMandate(brief: string, options: CompileMandateOptions = {
   );
 }
 
-export function respondToInterview(messages: InterviewMessage[]) {
+export function respondToInterview(messages: InterviewMessage[], baseCurrency: Currency = "PLN") {
   return request<InterviewResponse>("/api/interviews/respond", {
     method: "POST",
-    body: JSON.stringify({ messages, baseCurrency: "EUR", destinationCountry: "PL" }),
+    body: JSON.stringify({ messages, baseCurrency, destinationCountry: "PL" }),
   });
 }
 
@@ -96,10 +96,10 @@ export function getRealtimeToken() {
   return request<{ value: string; expiresAt?: number; model: string }>("/api/realtime/token", { method: "POST" });
 }
 
-export function searchProducts(plan: PurchasePlan) {
+export function searchProducts(plan: PurchasePlan, baseCurrency: Currency = "PLN") {
   return request<ProductSearchResponse>("/api/products/search", {
     method: "POST",
-    body: JSON.stringify({ plan, destinationCountry: "PL" }),
+    body: JSON.stringify({ plan, destinationCountry: "PL", baseCurrency }),
   });
 }
 
