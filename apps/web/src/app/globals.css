@@ -59,7 +59,7 @@ textarea { width: 100%; min-height: 126px; resize: vertical; border: 1px solid #
 .primary:hover:not(:disabled) { background: var(--berry-deep); }
 .secondary { border: 1px solid #aab7b3; background: transparent; color: var(--ink); }
 .danger { border: 1px solid #d6a49f; background: var(--danger-pale); color: var(--danger); }
-.step > .primary { width: 100%; margin-top: 10px; }
+.step > .primary, .step form > .primary { width: 100%; margin-top: 10px; }
 .button-row { display: flex; gap: 8px; margin-top: 12px; }
 .button-row > * { flex: 1; }
 .supporting, .empty-copy { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.5; }

@@ -41,7 +41,7 @@ export function DealHunterConsole() {
   const [busy, setBusy] = useState<BusyAction>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [mutationApplied, setMutationApplied] = useState(false);
-  const checkoutKey = useRef(crypto.randomUUID());
+  const checkoutKey = useRef<string | null>(null);
   const cursor = useRef("0");
 
   const decisions = useMemo(
@@ -83,7 +83,8 @@ export function DealHunterConsole() {
     };
   }, [runId]);
 
-  async function handleCompile() {
+  async function handleCompile(event?: React.FormEvent<HTMLFormElement>) {
+    event?.preventDefault();
     setBusy("compile");
     setMessage(null);
     setReceipt(null);
@@ -155,6 +156,7 @@ export function DealHunterConsole() {
     setBusy("checkout");
     setMessage(null);
     try {
+      checkoutKey.current ??= crypto.randomUUID();
       const result = await checkoutDecision(winner, checkoutKey.current);
       setReceipt(await getReceipt(result.receiptId));
       setMetrics(await getEvalSummary());
@@ -224,11 +226,13 @@ export function DealHunterConsole() {
       <div className="workspace">
         <section className="controls" aria-label="Sterowanie demonstracją">
           <Step number="01" title="Brief">
-            <label htmlFor="brief">Warunki zakupu</label>
-            <textarea id="brief" value={brief} onChange={(event) => setBrief(event.target.value)} rows={6} />
-            <button className="primary" type="button" onClick={handleCompile} disabled={busy !== null || brief.trim().length < 8}>
-              {busy === "compile" ? "Kompiluję…" : "Utwórz mandat"}
-            </button>
+            <form onSubmit={handleCompile}>
+              <label htmlFor="brief">Warunki zakupu</label>
+              <textarea id="brief" value={brief} onChange={(event) => setBrief(event.target.value)} rows={6} />
+              <button className="primary" type="submit" disabled={busy !== null || brief.trim().length < 8}>
+                {busy === "compile" ? "Kompiluję…" : "Utwórz mandat"}
+              </button>
+            </form>
           </Step>
 
           <Step number="02" title="Mandat">
