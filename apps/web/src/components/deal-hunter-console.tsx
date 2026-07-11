@@ -6,8 +6,11 @@ import type {
   CompileMandateResponse,
   Currency,
   Decision,
+  InterviewMessage,
+  InterviewResponse,
   Mandate,
   Money,
+  PurchasePlan,
   Receipt,
   RunEvent,
 } from '@deal-hunter/contracts';
@@ -22,10 +25,13 @@ import {
   mutateWinner,
   pollEvents,
   resetDemo,
+  respondToInterview,
   revokeMandate,
+  searchProducts,
   startRun,
   type EvalSummary,
 } from '@/lib/api';
+import { useVoiceInterview } from '@/lib/voice-interview';
 import { ChevronUpIcon, type ChevronUpIconHandle } from './chevron-up-icon';
 import { CirclePlusIcon, type CirclePlusIconHandle } from './circle-plus-icon';
 import { Trash2Icon } from './trash2-icon';
@@ -39,6 +45,7 @@ import {
   MandateCard,
   OfferLine,
   ReceiptCard,
+  RecommendationList,
   formatMoney,
   type ChatMessage,
 } from './chat-cards';
@@ -63,6 +70,7 @@ interface Chat {
   purchasedDecisionIds: string[];
   mutatedOfferIds: string[];
   busy: BusyAction;
+  interviewOptions: { label: string; value: string }[];
 }
 
 function dateAfterDays(days: number) {
@@ -112,7 +120,6 @@ export function DealHunterConsole() {
   const [isResetting, setIsResetting] = useState(false);
 
   const [inputValue, setInputValue] = useState("");
-  const [isRecording, setIsRecording] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [isUserPanelOpen, setIsUserPanelOpen] = useState(false);
   const [isPlusPopoverOpen, setIsPlusPopoverOpen] = useState(false);
@@ -151,14 +158,10 @@ export function DealHunterConsole() {
   const micIconRef = useRef<AudioLinesIconHandle>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const cursorsRef = useRef<Record<string, string>>({});
-
-  useEffect(() => {
-    if (isRecording) {
-      micIconRef.current?.startAnimation();
-    } else {
-      micIconRef.current?.stopAnimation();
-    }
-  }, [isRecording]);
+  const chatsRef = useRef<Chat[]>([]);
+  chatsRef.current = chats;
+  const interviewsRef = useRef<Record<string, InterviewMessage[]>>({});
+  const voiceChatIdRef = useRef<string | null>(null);
 
   const currentChat = chats.find(c => c.id === currentChatId);
   const messages = currentChat ? currentChat.messages : [];
@@ -225,6 +228,8 @@ export function DealHunterConsole() {
 
   const handleDeleteHistory = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
+    if (voiceChatIdRef.current === id) voice.stop();
+    delete interviewsRef.current[id];
     setChats(prev => prev.filter(c => c.id !== id));
     if (currentChatId === id) {
       setCurrentChatId(null);
@@ -232,74 +237,202 @@ export function DealHunterConsole() {
   };
 
   const handleSelectChat = (id: string) => {
+    if (voice.state !== 'idle' && voiceChatIdRef.current !== id) voice.stop();
     setCurrentChatId(id);
   };
 
-  const handleSend = async (e: React.FormEvent) => {
+  const createChat = (title: string, messages: ChatMessage[]): Chat => {
+    const chat: Chat = {
+      id: Date.now().toString(),
+      title: title.length > 20 ? title.substring(0, 20) + "..." : title,
+      messages,
+      context: draftContext,
+      pendingBrief: null,
+      ambiguities: [],
+      mandate: null,
+      runId: null,
+      checkoutKey: null,
+      purchasedDecisionIds: [],
+      mutatedOfferIds: [],
+      busy: null,
+      interviewOptions: [],
+    };
+    setChats(prev => [chat, ...prev]);
+    setCurrentChatId(chat.id);
+    setDraftContext({});
+    return chat;
+  };
+
+  const handleSend = (e: React.FormEvent) => {
     e.preventDefault();
     const userText = inputValue.trim();
+    if (!userText || isSending) return;
+    setInputValue("");
+    void sendUserMessage(userText);
+  };
+
+  const sendUserMessage = async (userText: string) => {
     if (!userText || isSending) return;
 
     setIsSending(true);
     sendIconRef.current?.startAnimation();
-    setInputValue("");
 
     let activeId = currentChatId;
     let chat = chats.find(c => c.id === activeId);
 
     if (!activeId || !chat) {
-      activeId = Date.now().toString();
-      chat = {
-        id: activeId,
-        title: userText.length > 20 ? userText.substring(0, 20) + "..." : userText,
-        messages: [{ id: uid(), sender: 'user', text: userText }],
-        context: draftContext,
-        pendingBrief: null,
-        ambiguities: [],
-        mandate: null,
-        runId: null,
-        checkoutKey: null,
-        purchasedDecisionIds: [],
-        mutatedOfferIds: [],
-        busy: null,
-      };
-      setChats(prev => [chat!, ...prev]);
-      setCurrentChatId(activeId);
-      setDraftContext({});
+      chat = createChat(userText, [{ id: uid(), sender: 'user', text: userText }]);
+      activeId = chat.id;
     } else {
       appendMessages(activeId, [{ id: uid(), sender: 'user', text: userText }]);
+      updateChat(activeId, c => ({ ...c, interviewOptions: [] }));
     }
 
-    const answeringAmbiguities = chat.ambiguities.length > 0 && chat.pendingBrief;
-    const brief = answeringAmbiguities ? `${chat.pendingBrief}, ${userText}` : userText;
-
-    setChatBusy(activeId, 'compile');
     try {
-      const response = await compileMandate(brief, compileOptionsFor(chat.context));
-      updateChat(activeId, c => ({
+      if (voice.state !== 'idle' && voiceChatIdRef.current === activeId) {
+        // An active voice conversation owns the interview: typed answers join it and the reply is spoken.
+        pushInterviewEntry(activeId, 'user', userText);
+        voice.sendUserText(userText);
+        return;
+      }
+      if (!chat.mandate && !chat.pendingBrief) {
+        await runInterviewTurn(activeId, userText, chat.context);
+        return;
+      }
+      const answeringAmbiguities = chat.ambiguities.length > 0 && chat.pendingBrief;
+      const brief = answeringAmbiguities ? `${chat.pendingBrief}, ${userText}` : userText;
+      await compileBrief(activeId, brief, chat.context);
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  const compileBrief = async (chatId: string, brief: string, context: ShoppingContext) => {
+    setChatBusy(chatId, 'compile');
+    try {
+      const response = await compileMandate(brief, compileOptionsFor(context));
+      updateChat(chatId, c => ({
         ...c,
         mandate: response.mandate,
         ambiguities: response.ambiguities,
         pendingBrief: brief,
       }));
       if (response.ambiguities.length) {
-        appendMessages(activeId, [
+        appendMessages(chatId, [
           botText(response.error?.message ?? "I need a bit more detail before I can lock in this mandate:"),
           ...response.ambiguities.map(item => botText(item.question)),
         ]);
       } else {
-        appendMessages(activeId, [
+        appendMessages(chatId, [
           botText("Here is the purchase mandate I compiled from your brief. Approve it and I'll start hunting."),
           { id: uid(), sender: 'bot', kind: 'mandate', compiled: response },
         ]);
       }
     } catch (error) {
-      appendMessages(activeId, [botError(error)]);
+      appendMessages(chatId, [botError(error)]);
     } finally {
-      setChatBusy(activeId, null);
-      setIsSending(false);
+      setChatBusy(chatId, null);
     }
   };
+
+  const pushInterviewEntry = (chatId: string, role: InterviewMessage['role'], content: string) => {
+    interviewsRef.current[chatId] = [...(interviewsRef.current[chatId] ?? []), { role, content }];
+  };
+
+  const runInterviewTurn = async (chatId: string, userText: string, context: ShoppingContext) => {
+    const isFirstTurn = !(interviewsRef.current[chatId]?.length);
+    const contextHints: string[] = [];
+    if (isFirstTurn && context.budget) {
+      contextHints.push(`My full budget including delivery is ${context.budget.amount} ${context.budget.currency}.`);
+    }
+    if (isFirstTurn && context.timing) {
+      contextHints.push(context.timing.purchaseBy ? `I want to buy by ${context.timing.purchaseBy}.` : 'I want to buy right away.');
+    }
+    pushInterviewEntry(chatId, 'user', [userText, ...contextHints].join(' '));
+    setChatBusy(chatId, 'compile');
+    try {
+      const response = await respondToInterview(interviewsRef.current[chatId] ?? []);
+      pushInterviewEntry(chatId, 'assistant', response.assistantMessage);
+      appendMessages(chatId, [botText(response.assistantMessage)]);
+      if (response.status === 'READY' && response.brief && response.plan) {
+        await finishInterview(chatId, response);
+      } else {
+        updateChat(chatId, c => ({ ...c, interviewOptions: response.options }));
+      }
+    } catch (error) {
+      appendMessages(chatId, [botError(error)]);
+    } finally {
+      setChatBusy(chatId, null);
+    }
+  };
+
+  const finishInterview = async (chatId: string, response: InterviewResponse) => {
+    if (!response.brief || !response.plan) return;
+    updateChat(chatId, c => ({ ...c, interviewOptions: [] }));
+    const context = chatsRef.current.find(c => c.id === chatId)?.context ?? {};
+    await compileBrief(chatId, response.brief, context);
+    void searchRecommendations(chatId, response.plan);
+  };
+
+  const searchRecommendations = async (chatId: string, plan: PurchasePlan) => {
+    appendMessages(chatId, [botText("I'm also scanning the web for concrete offers in the meantime…")]);
+    try {
+      const results = await searchProducts(plan);
+      appendMessages(chatId, [{ id: uid(), sender: 'bot', kind: 'recommendations', items: results.recommendations }]);
+    } catch (error) {
+      appendMessages(chatId, [botError(error)]);
+    }
+  };
+
+  const voice = useVoiceInterview({
+    onTranscript: (role, text) => {
+      const chatId = voiceChatIdRef.current;
+      if (!chatId) return;
+      pushInterviewEntry(chatId, role, text);
+      appendMessages(chatId, [role === 'user' ? { id: uid(), sender: 'user', text } : botText(text)]);
+    },
+    onFinalize: async (summary) => {
+      const chatId = voiceChatIdRef.current;
+      if (!chatId) return { kind: 'retry' };
+      const history = interviewsRef.current[chatId] ?? [];
+      const confirmation: InterviewMessage = {
+        role: 'user',
+        content: summary ? `I confirm the requirements: ${summary}` : 'I confirm the requirements from the voice conversation.',
+      };
+      setChatBusy(chatId, 'compile');
+      try {
+        const response = await respondToInterview([...history, confirmation]);
+        if (response.status === 'READY' && response.brief && response.plan) {
+          await finishInterview(chatId, response);
+          return { kind: 'done' };
+        }
+        return { kind: 'ask', question: response.assistantMessage };
+      } catch (error) {
+        appendMessages(chatId, [botError(error)]);
+        return { kind: 'retry' };
+      } finally {
+        setChatBusy(chatId, null);
+      }
+    },
+    onError: (message) => {
+      const chatId = voiceChatIdRef.current ?? currentChatId;
+      if (chatId) {
+        appendMessages(chatId, [{ id: uid(), sender: 'bot', kind: 'error', code: 'VOICE_ERROR', text: message, reasonCodes: [] }]);
+      }
+    },
+    onStop: () => {
+      voiceChatIdRef.current = null;
+    },
+  });
+  const isRecording = voice.state === 'listening';
+
+  useEffect(() => {
+    if (isRecording) {
+      micIconRef.current?.startAnimation();
+    } else {
+      micIconRef.current?.stopAnimation();
+    }
+  }, [isRecording]);
 
   const handleApprove = async (chatId: string, mandate: Mandate) => {
     setChatBusy(chatId, 'approve');
@@ -461,12 +594,14 @@ export function DealHunterConsole() {
     setIsResetting(true);
     setPurchasesNotice(null);
     try {
+      voice.stop();
       await resetDemo();
       setChats([]);
       setCurrentChatId(null);
       setDraftContext({});
       setPurchases([]);
       cursorsRef.current = {};
+      interviewsRef.current = {};
       setMetrics(await getEvalSummary().catch(() => null));
       setPurchasesNotice("Demo reset — mandates, runs and receipts were cleared.");
     } catch (error) {
@@ -477,7 +612,16 @@ export function DealHunterConsole() {
   };
 
   const toggleRecording = () => {
-    setIsRecording(!isRecording);
+    if (voice.state !== 'idle') {
+      voice.stop();
+      return;
+    }
+    let activeId = currentChatId;
+    if (!activeId || !chats.some(c => c.id === activeId)) {
+      activeId = createChat('Voice conversation', []).id;
+    }
+    voiceChatIdRef.current = activeId;
+    void voice.start(interviewsRef.current[activeId] ?? []);
   };
 
   const toggleSidebar = () => {
@@ -605,6 +749,12 @@ export function DealHunterConsole() {
         return (
           <div key={message.id} className="chat-bubble bot has-card">
             <ReceiptCard receipt={message.receipt} />
+          </div>
+        );
+      case 'recommendations':
+        return (
+          <div key={message.id} className="chat-bubble bot has-card">
+            <RecommendationList items={message.items} />
           </div>
         );
     }
@@ -800,6 +950,20 @@ export function DealHunterConsole() {
           ) : (
             <>
               {currentChat && messages.map((msg) => renderBotMessage(currentChat, msg))}
+              {currentChat && currentChat.interviewOptions.length > 0 && !isThinking && (
+                <div className="quick-replies" aria-label="Suggested answers">
+                  {currentChat.interviewOptions.map(option => (
+                    <button
+                      key={`${option.label}-${option.value}`}
+                      type="button"
+                      onClick={() => void sendUserMessage(option.value)}
+                      disabled={isSending}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              )}
               <AnimatePresence>
                 {isThinking && (
                   <motion.div
@@ -965,8 +1129,9 @@ export function DealHunterConsole() {
                 type="button"
                 className={`voice-btn has-tooltip ${isRecording ? 'recording' : ''}`}
                 onClick={toggleRecording}
-                aria-label="Voice input"
-                data-tooltip="Dictate"
+                disabled={voice.state === 'connecting'}
+                aria-label={isRecording ? 'End the voice conversation' : 'Start a voice conversation'}
+                data-tooltip={voice.state === 'connecting' ? 'Connecting…' : isRecording ? 'End voice chat' : 'Talk to the advisor'}
               >
                 {isRecording ? (
                   <AudioLinesIcon ref={micIconRef} size={18} color="currentColor" />

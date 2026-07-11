@@ -6,6 +6,7 @@ import type {
   Decision,
   Mandate,
   Money,
+  ProductRecommendation,
   Receipt,
 } from '@deal-hunter/contracts';
 
@@ -16,7 +17,8 @@ export type ChatMessage =
   | { id: string; sender: 'bot'; kind: 'mandate'; compiled: CompileMandateResponse }
   | { id: string; sender: 'bot'; kind: 'offer'; offer: CanonicalOffer }
   | { id: string; sender: 'bot'; kind: 'decision'; decision: Decision }
-  | { id: string; sender: 'bot'; kind: 'receipt'; receipt: Receipt };
+  | { id: string; sender: 'bot'; kind: 'receipt'; receipt: Receipt }
+  | { id: string; sender: 'bot'; kind: 'recommendations'; items: ProductRecommendation[] };
 
 export function formatMoney(money: Money) {
   return new Intl.NumberFormat('en', { style: 'currency', currency: money.currency }).format(money.amountMinor / 100);
@@ -200,6 +202,34 @@ export function ReceiptCard({ receipt }: { receipt: Receipt }) {
         </div>
       </dl>
       <code className="receipt-key">{receipt.idempotencyKey}</code>
+    </div>
+  );
+}
+
+export function RecommendationList({ items }: { items: ProductRecommendation[] }) {
+  return (
+    <div className="chat-card recommendations">
+      <div className="chat-card-header">
+        <span className="status-pill approved">LIVE OFFERS</span>
+        <small>{items.length} product page{items.length === 1 ? '' : 's'} found on the web</small>
+      </div>
+      <p className="chat-card-copy">Confirm price and availability with the seller before buying.</p>
+      <div className="recommendation-items">
+        {items.map((item) => (
+          <div className="recommendation-item" key={`${item.url}-${item.name}`}>
+            <div className="recommendation-item-main">
+              <strong>{item.name}</strong>
+              <span>{item.category} · {item.seller}</span>
+              <p>{item.whyItFits}</p>
+              {item.tradeoffs.length > 0 && <small>Check first: {item.tradeoffs.join(' · ')}</small>}
+            </div>
+            <div className="recommendation-item-side">
+              <strong>{item.price}</strong>
+              <a href={item.url} target="_blank" rel="noreferrer">View offer ↗</a>
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
